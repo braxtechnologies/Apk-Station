@@ -1,0 +1,63 @@
+<resources>
+    <string name="app_name">Apk Station</string>
+    
+    <!-- Permission Screen -->
+    <string name="permission_select">Apk Station requires following permissions</string>
+    <string name="title_permissions">Permissions</string>
+    <string name="permission_granted">Permission granted</string>
+    <string name="permissions_denied">Required permissions were denied. Please grant them in order to use the application.</string>
+    <string name="grant_all_permissions_message">Please grant all required permissions first!</string>
+    <string name="action_grant">Grant</string>
+    <string name="action_granted">Granted</string>
+    <string name="action_finish">Continue</string>
+    <string name="item_required">Required</string>
+    <string name="item_optional">Optional</string>
+    
+    <!-- Store Lending Screen -->
+    <string name="app_name_store">Apk Station</string>
+    <string name="search_hint">Search apps…</string>
+    <string name="no_results">No apps available</string>
+    <string name="app_installed">Installed</string>
+    <string name="update_available">Update available</string>
+    <string name="open">Open</string>
+    <string name="install">Install</string>
+    <string name="update">Update</string>
+    <string name="uninstall">Uninstall</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="network_connection_established">Network connection established</string>
+    <string name="network_connection_unavailable">Network connection unavailable</string>
+    <string name="favorites">Favorites</string>
+    
+    <!-- App Info Screen -->
+    <string name="rating">Rating</string>
+    <string name="size">Size</string>
+    <string name="pegi">PEGI</string>
+    <string name="version">v%1$s</string>
+    <string name="latest_version">(Latest: v%1$s)</string>
+    <string name="screenshots">Screenshots</string>
+    <string name="about_app">About this app</string>
+
+    <!-- Dialog -->
+    <string name="app_unavailable">App Unavailable</string>
+    <string name="app_requested">App Requested</string>
+    <string name="info_dialog_app_restricted_message">This app is being prepared from an external source. It can take 2–3 minutes to become available if it\'s not region restricted. We\'ll automatically download the app when it\'s ready.</string>
+    <string name="dialog_app_unavailable_message">This app is restricted and not available. This might be because of region restrictions. Once the app becomes available you\'ll be notified.</string>
+
+    <!-- Button -->
+    <string name="requesting">Requesting…</string>
+    <string name="downloading">Downloading…</string>
+    <string name="installing">Installing…</string>
+    <string name="uninstalling">Uninstalling…</string>
+    <string name="requested">Requested</string>
+    <string name="unavailable">Unavailable</string>
+    <string name="updating">Updating…</string>
+    <string name="button_unavailable">Unavailable</string>
+    <string name="button_requested">Requested</string>
+    <string name="button_updating">Updating…</string>
+
+    <!-- Other -->
+    <string name="no_results_found">No results found</string>
+    <string name="back">Back</string>
+    <string name="no_apps_in_category">No apps available in this category</string>
+
+</resources>

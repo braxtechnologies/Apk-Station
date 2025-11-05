@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="Theme.ApkStation" parent="Theme.MaterialComponents.DayNight.NoActionBar" />
+
+    <!-- Splash Screen Theme -->
+    <style name="Theme.ApkStation.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/primary_dark</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/apk_station</item>
+        <item name="windowSplashScreenAnimationDuration">1000</item>
+        <item name="postSplashScreenTheme">@style/Theme.ApkStation</item>
+    </style>
+
+    <style name="roundedButtonShapeStyle" parent="Widget.MaterialComponents.Button">
+        <item name="shapeAppearance">@style/roundedButtonShape</item>
+    </style>
+
+</resources>
