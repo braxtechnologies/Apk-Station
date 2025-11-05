@@ -7,6 +7,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.util.Log
 import androidx.compose.runtime.Immutable
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
@@ -18,9 +19,15 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.network.dto.ApkDetailsDto
+import com.brax.apkstation.data.network.dto.DownloadResponseDto
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
 import com.brax.apkstation.data.workers.DownloadWorker
+import com.brax.apkstation.data.workers.RequestDownloadUrlWorker
+import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_PACKAGE_NAME
+import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_SESSION_ID
+import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_UUID
+import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_VERSION_CODE
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.Result
@@ -29,6 +36,7 @@ import com.brax.apkstation.utils.preferences.AppPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -41,7 +49,7 @@ import javax.inject.Inject
 class AppInfoViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
     private val workManager: WorkManager,
-    private val appPreferencesRepository: AppPreferencesRepository,
+    appPreferencesRepository: AppPreferencesRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -95,7 +103,7 @@ class AppInfoViewModel @Inject constructor(
         
         // Note: We can't clean up downloads here because viewModelScope is already cancelled
         // The stale download cleanup in StoreLendingViewModel will handle this case
-        android.util.Log.i("AppInfoViewModel", "ViewModel cleared - any in-progress downloads will be cleaned up by stale download cleanup")
+        Log.i("AppInfoViewModel", "ViewModel cleared - any in-progress downloads will be cleaned up by stale download cleanup")
         
         // Unregister network callback
         networkCallback?.let {
@@ -125,7 +133,7 @@ class AppInfoViewModel @Inject constructor(
                 val actualUuid = if (isUuid) uuid else null
                 val actualPackageName = if (isUuid) packageName else uuid
                 
-                android.util.Log.d("AppInfoViewModel", "loadAppDetails - identifier: $uuid, isUuid: $isUuid, actualUuid: $actualUuid, actualPackage: $actualPackageName")
+                Log.d("AppInfoViewModel", "loadAppDetails - identifier: $uuid, isUuid: $isUuid, actualUuid: $actualUuid, actualPackage: $actualPackageName")
                 
                 // Fetch details from API using UUID (preferred) or package name
                 when (val result = apkRepository.getApkDetails(uuid = actualUuid, packageName = actualPackageName)) {
@@ -277,20 +285,20 @@ class AppInfoViewModel @Inject constructor(
                     createAndSaveDownload(app, apkDetails)
 
                     // Show message about potential wait time
-                    android.util.Log.i("AppInfoViewModel", "Requesting download for ${app.packageName}. This may take up to 3 minutes if the app needs to be fetched from external source.")
+                    Log.i("AppInfoViewModel", "Requesting download for ${app.packageName}. This may take up to 3 minutes if the app needs to be fetched from external source.")
                     
                     // Enqueue RequestDownloadUrlWorker to handle the potentially long-running request
                     // This runs in the background so the user can navigate away
                     val latestVersion = apkDetails.versions.firstOrNull()
                     val uuid = app.uuid?.takeIf { it.isNotEmpty() }
                     
-                    val requestWorkRequest = OneTimeWorkRequestBuilder<com.brax.apkstation.data.workers.RequestDownloadUrlWorker>()
+                    val requestWorkRequest = OneTimeWorkRequestBuilder<RequestDownloadUrlWorker>()
                         .setInputData(
-                            androidx.work.workDataOf(
-                                com.brax.apkstation.data.workers.RequestDownloadUrlWorker.KEY_PACKAGE_NAME to app.packageName,
-                                com.brax.apkstation.data.workers.RequestDownloadUrlWorker.KEY_SESSION_ID to sessionInfo.newSessionId,
-                                com.brax.apkstation.data.workers.RequestDownloadUrlWorker.KEY_UUID to uuid,
-                                com.brax.apkstation.data.workers.RequestDownloadUrlWorker.KEY_VERSION_CODE to (latestVersion?.versionCode ?: -1)
+                            workDataOf(
+                                KEY_PACKAGE_NAME to app.packageName,
+                                KEY_SESSION_ID to sessionInfo.newSessionId,
+                                KEY_UUID to uuid,
+                                KEY_VERSION_CODE to (latestVersion?.versionCode ?: -1)
                             )
                         )
                         .build()
@@ -305,7 +313,7 @@ class AppInfoViewModel @Inject constructor(
                     startDownloadMonitoring(app.packageName)
                 } catch (e: Exception) {
                     // Handle errors during setup
-                    android.util.Log.e("AppInfoViewModel", "Failed to start download for ${app.packageName}", e)
+                    Log.e("AppInfoViewModel", "Failed to start download for ${app.packageName}", e)
                     
                     _uiState.update { state ->
                         state.appDetails?.let { details ->
@@ -347,7 +355,7 @@ class AppInfoViewModel @Inject constructor(
             workManager.cancelUniqueWork(oldWorkName)
         }
 
-        kotlinx.coroutines.delay(500) // Give WorkManager time to stop
+        delay(500) // Give WorkManager time to stop
 
         return DownloadSessionInfo(oldSessionId, newSessionId)
     }
@@ -399,14 +407,14 @@ class AppInfoViewModel @Inject constructor(
     private suspend fun fetchDownloadUrl(
         app: AppDetailsData,
         apkDetails: ApkDetailsDto
-    ): com.brax.apkstation.data.network.dto.DownloadResponseDto {
+    ): DownloadResponseDto {
         // Get latest version if available, null if versions array is empty
         val latestVersion = apkDetails.versions.firstOrNull()
         
         // If no versions available, we'll call /download without versionCode
         // This happens when app is not yet cached and needs to be fetched from external source
         if (latestVersion == null) {
-            android.util.Log.d("AppInfoViewModel", "No versions available for ${app.packageName}, requesting from external source")
+            Log.d("AppInfoViewModel", "No versions available for ${app.packageName}, requesting from external source")
         }
 
         // Use UUID if not empty/null, otherwise use package name
@@ -513,7 +521,7 @@ class AppInfoViewModel @Inject constructor(
         var pollInterval = 500L
 
         while (true) {
-            kotlinx.coroutines.delay(pollInterval)
+            delay(pollInterval)
 
             val currentApp = _uiState.value.appDetails ?: break
             val download = apkRepository.getDownload(packageName)
@@ -570,7 +578,7 @@ class AppInfoViewModel @Inject constructor(
         // Check if app was marked as REQUESTED in the database
         val dbApp = apkRepository.getAppByPackageName(currentApp.packageName)
         if (dbApp?.status == AppStatus.REQUESTED) {
-            android.util.Log.i("AppInfoViewModel", "App ${currentApp.packageName} marked as REQUESTED - stopping monitoring")
+            Log.i("AppInfoViewModel", "App ${currentApp.packageName} marked as REQUESTED - stopping monitoring")
             _uiState.update { state ->
                 state.copy(
                     appDetails = currentApp.copy(status = AppStatus.REQUESTED),
@@ -588,7 +596,7 @@ class AppInfoViewModel @Inject constructor(
             }
         }
 
-        kotlinx.coroutines.delay(1000)
+        delay(1000)
 
         val checkDownload = apkRepository.getDownload(currentApp.packageName)
         if (checkDownload?.status == DownloadStatus.FAILED) {
@@ -724,7 +732,7 @@ class AppInfoViewModel @Inject constructor(
             val wasUpdate = app.hasUpdate || app.status == AppStatus.UPDATING
 
             // Give PackageManager a moment to update
-            kotlinx.coroutines.delay(300)
+            delay(300)
 
             // Get the newly installed version
             val installedVersionInfo = getInstalledVersionInfo(packageName)
@@ -872,7 +880,7 @@ class AppInfoViewModel @Inject constructor(
                 }
 
                 // Give Worker time to see CANCELLED status and stop
-                kotlinx.coroutines.delay(500)
+                delay(500)
 
                 // Now delete the cancelled download entry
                 apkRepository.deleteDownload(app.packageName)
@@ -1021,7 +1029,7 @@ class AppInfoViewModel @Inject constructor(
                     }
                     _uiState.update { it.copy(errorMessage = message) }
                 } catch (e: Exception) {
-                    android.util.Log.e("AppInfoViewModel", "Failed to toggle favorite", e)
+                    Log.e("AppInfoViewModel", "Failed to toggle favorite", e)
                     _uiState.update { it.copy(errorMessage = "Failed to update favorite") }
                 }
             }
