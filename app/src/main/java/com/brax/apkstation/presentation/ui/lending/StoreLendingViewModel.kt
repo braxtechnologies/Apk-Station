@@ -960,6 +960,7 @@ class StoreLendingViewModel @Inject constructor(
                                             RequestDownloadUrlWorker.KEY_VERSION_CODE to -1
                                         )
                                     )
+                                    .addTag("request_${app.packageName}")
                                     .build()
 
                             workManager.enqueueUniqueWork(

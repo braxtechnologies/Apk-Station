@@ -260,6 +260,7 @@ class CategoryAppsViewModel @Inject constructor(
                                     RequestDownloadUrlWorker.KEY_VERSION_CODE to (latestVersion?.versionCode ?: -1)
                                 )
                             )
+                            .addTag("request_${app.packageName}")
                             .build()
 
                         workManager.enqueueUniqueWork(
@@ -413,8 +414,8 @@ class CategoryAppsViewModel @Inject constructor(
         newStatus: AppStatus,
         hasUpdate: Boolean? = null
     ) {
-        _uiState.update { state ->
-            state.copy(
+            _uiState.update { state ->
+                state.copy(
                 apps = state.apps.map { app ->
                     if (app.packageName == packageName) {
                         if (hasUpdate != null) {
