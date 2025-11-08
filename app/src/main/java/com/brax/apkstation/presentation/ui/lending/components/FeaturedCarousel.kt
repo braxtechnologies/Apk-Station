@@ -114,127 +114,222 @@ private fun FeaturedAppCard(
         onClick = onCardClick,
         modifier = modifier
             .fillMaxWidth()
-            .height(180.dp),
+            .height(270.dp),
         shape = RoundedCornerShape(8.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
     ) {
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    brush = Brush.linearGradient(
-                        colors = gradientColors
-                    )
-                )
-                .padding(16.dp)
+            modifier = Modifier.fillMaxSize()
         ) {
-            // Featured badge at top left
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(x = (-16).dp, y = (-16).dp)
-                    .background(
-                        color = Color.White.copy(alpha = 0.95f),
-                        shape = RoundedCornerShape(
-                            topStart = 8.dp,
-                            topEnd = 0.dp,
-                            bottomStart = 0.dp,
-                            bottomEnd = 12.dp
+            // Background image (first image from the app's images list)
+            val backgroundImage = app.images.firstOrNull()
+            val hasImage = backgroundImage != null
+
+            if (hasImage) {
+                SubcomposeAsyncImage(
+                    model = backgroundImage,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                    loading = {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    brush = Brush.linearGradient(
+                                        colors = gradientColors
+                                    )
+                                )
                         )
-                    )
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Text(
-                    text = "Featured",
-                    style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = gradientColors.first()
+                    },
+                    error = {
+                        // Fallback to gradient if image fails to load
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    brush = Brush.linearGradient(
+                                        colors = gradientColors
+                                    )
+                                )
+                        )
+                    }
+                )
+
+                // Colorful gradient overlay from bottom to middle (only when image is present)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.verticalGradient(
+                                0.0f to Color.Transparent,
+                                0.30f to Color.Transparent,
+                                0.35f to gradientColors[0].copy(alpha = 0.35f),
+                                0.40f to gradientColors[0].copy(alpha = 0.65f),
+                                0.45f to gradientColors[0].copy(alpha = 0.75f),
+                                0.50f to gradientColors[0].copy(alpha = 0.90f),
+                                0.55f to gradientColors[0],
+                                1.0f to gradientColors[0],
+                                startY = 0.0f,
+                                endY = Float.POSITIVE_INFINITY
+                            )
+                        )
+                )
+            } else {
+                // Fallback to gradient if no image available (no overlay needed)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = gradientColors
+                            )
+                        )
                 )
             }
 
-            // App info and action button at bottom
-            Row(
+            // Content container
+            Box(
                 modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                    .fillMaxSize()
+                    .padding(16.dp)
             ) {
-                // App icon and info
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
+                // Featured badge at top left
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .offset(x = (-16).dp, y = (-16).dp)
+                        .background(
+                            color = gradientColors[0],
+                            shape = RoundedCornerShape(
+                                topStart = 8.dp,
+                                topEnd = 0.dp,
+                                bottomStart = 0.dp,
+                                bottomEnd = 12.dp
+                            )
+                        )
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
                 ) {
-                    // App icon
-                    SubcomposeAsyncImage(
-                        model = app.icon,
-                        contentDescription = "${app.name} icon",
-                        modifier = Modifier
-                            .size(56.dp)
-                            .clip(RoundedCornerShape(12.dp)),
-                        contentScale = ContentScale.Crop,
-                        loading = {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
+                    Text(
+                        text = "Featured",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.Black
+                    )
+                }
+
+                // App info and action button at bottom
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .fillMaxWidth()
+                ) {
+                    // Excerpt text on top (if available)
+                    if (!app.excerpt.isNullOrEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .padding(bottom = 16.dp)
+                        ) {
+                             Text(
+                                 text = app.excerpt,
+                                 style = MaterialTheme.typography.titleMedium,
+                                 color = Color.Black,
+                                 maxLines = 2,
+                                 overflow = TextOverflow.Ellipsis,
+                             )
+
+                            Text(
+                                text = "${app.name} is now on App Station",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color.Black,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+
+                    // Row with icon, app info, and button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        // App icon and info
+                        Row(
+                            modifier = Modifier.weight(1f),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // App icon
+                            SubcomposeAsyncImage(
+                                model = app.icon,
+                                contentDescription = "${app.name} icon",
+                                modifier = Modifier
+                                    .size(56.dp)
+                                    .clip(RoundedCornerShape(12.dp)),
+                                contentScale = ContentScale.Crop,
+                                loading = {
+                                    Box(
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(24.dp),
+                                            color = Color.White
+                                        )
+                                    }
+                                }
+                            )
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            // App name and publisher
+                            Column(
+                                modifier = Modifier.weight(1f)
                             ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    color = Color.White
+                                Text(
+                                    text = app.name,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color.Black,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
+
+                                app.author?.let { author ->
+                                    Text(
+                                        text = author,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color.Black.copy(alpha = 0.7f),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
-                    )
 
-                    Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
 
-                    // App name and publisher
-                    Column(
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Text(
-                            text = app.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        app.author?.let { author ->
+                        // Action button at bottom right
+                        Button(
+                            onClick = onActionClick,
+                            modifier = Modifier
+                                .height(40.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color.White.copy(alpha = 0.2f)
+                            ),
+                            shape = RoundedCornerShape(20.dp),
+                            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp)
+                        ) {
                             Text(
-                                text = author,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color.White.copy(alpha = 0.9f),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
+                                text = getActionButtonText(app.status),
+                                color = Color.Black,
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                // Action button at bottom right
-                Button(
-                    onClick = onActionClick,
-                    modifier = Modifier
-                        .height(40.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color.White,
-                        contentColor = gradientColors.first()
-                    ),
-                    shape = RoundedCornerShape(20.dp),
-                    elevation = ButtonDefaults.buttonElevation(defaultElevation = 4.dp)
-                ) {
-                    Text(
-                        text = getActionButtonText(app.status),
-                        style = MaterialTheme.typography.labelLarge,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
             }
-
         }
     }
 }

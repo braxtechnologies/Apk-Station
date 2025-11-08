@@ -51,6 +51,9 @@ class StoreLendingViewModel @Inject constructor(
     
     // Section cache for BRAX Picks, Top Charts, New Releases
     private val sectionCache = SectionCache()
+    
+    // Featured apps details cache (with images for carousel)
+    private val featuredAppsDetailsCache = FeaturedAppsDetailsCache()
 
     private val _lendingUiState = MutableStateFlow(
         LendingViewState(
@@ -231,6 +234,11 @@ class StoreLendingViewModel @Inject constructor(
                                 monitorDownloadProgress(app.packageName)
                             }
                         }
+                        
+                        // Fetch featured app details with images for BRAX Picks section
+                        if (sort == "featured" && category == null) {
+                            fetchFeaturedAppsDetails(appItems)
+                        }
                     }
 
                     is Result.Error -> {
@@ -249,6 +257,86 @@ class StoreLendingViewModel @Inject constructor(
                 }
             } finally {
                 _lendingUiState.update { it.copy(isLoading = false, isRefreshing = false) }
+            }
+        }
+    }
+    
+    /**
+     * Fetch detailed information (including images) for the first 5 featured apps
+     * Results are cached for 5 minutes to avoid excessive API calls
+     */
+    private fun fetchFeaturedAppsDetails(appItems: List<AppItem>) {
+        viewModelScope.launch {
+            try {
+                // Check cache first
+                val cachedDetails = featuredAppsDetailsCache.get()
+                if (cachedDetails != null) {
+                    Log.d("StoreLendingViewModel", "Using cached featured apps details")
+                    // Update apps list with cached details
+                    val updatedApps = appItems.mapIndexed { index, app ->
+                        if (index < 5) {
+                            cachedDetails.getOrNull(index) ?: app
+                        } else {
+                            app
+                        }
+                    }
+                    _lendingUiState.update { it.copy(apps = updatedApps) }
+                    allApps = updatedApps
+                    return@launch
+                }
+                
+                // Fetch details for first 5 apps
+                val first5Apps = appItems.take(5)
+                val appsWithDetails = mutableListOf<AppItem>()
+                
+                first5Apps.forEach { app ->
+                    // Use UUID if available, otherwise use package name
+                    val uuid = app.uuid?.takeIf { it.isNotEmpty() }
+                    when (val result = apkRepository.getApkDetails(uuid = uuid, packageName = if (uuid == null) app.packageName else null)) {
+                        is Result.Success -> {
+                            val details = result.data
+                            // Create updated AppItem with images and excerpt
+                            appsWithDetails.add(
+                                app.copy(
+                                    images = details.images,
+                                    excerpt = details.excerpt?.substringBefore("\r\n")
+                                )
+                            )
+                            Log.d("StoreLendingViewModel", "Fetched details for ${app.name}, images: ${details.images.size}")
+                        }
+                        is Result.Error -> {
+                            Log.e("StoreLendingViewModel", "Failed to fetch details for ${app.name}: ${result.message}")
+                            // Keep app without images
+                            appsWithDetails.add(app)
+                        }
+                        is Result.Loading -> {
+                            // Keep app without images
+                            appsWithDetails.add(app)
+                        }
+                    }
+                }
+                
+                // Cache the enriched apps
+                featuredAppsDetailsCache.put(appsWithDetails)
+                
+                // Update UI with enriched apps
+                val updatedApps = appItems.mapIndexed { index, app ->
+                    if (index < 5) {
+                        appsWithDetails.getOrNull(index) ?: app
+                    } else {
+                        app
+                    }
+                }
+                
+                _lendingUiState.update { it.copy(apps = updatedApps) }
+                allApps = updatedApps
+                
+                // Update section cache with enriched data
+                sectionCache.put("featured", updatedApps)
+                
+            } catch (e: Exception) {
+                Log.e("StoreLendingViewModel", "Error fetching featured apps details", e)
+                // Continue with non-enriched apps
             }
         }
     }
@@ -1349,7 +1437,9 @@ data class AppItem(
     val size: String? = null,
     val status: AppStatus = AppStatus.NOT_INSTALLED,
     val hasUpdate: Boolean = false,
-    val category: String = "Others"
+    val category: String = "Others",
+    val images: List<String> = emptyList(), // App screenshot images, populated for featured apps
+    val excerpt: String? = null // App description excerpt, populated for featured apps
 )
 
 /**
@@ -1524,5 +1614,53 @@ private class SectionCache(
      */
     fun clearSection(sectionKey: String) {
         cache.remove(sectionKey)
+    }
+}
+
+/**
+ * Cache for featured apps details (with images)
+ * Caches for 5 minutes to avoid excessive API calls
+ */
+private class FeaturedAppsDetailsCache(
+    private val expirationTimeMillis: Long = 5 * 60 * 1000 // 5 minutes
+) {
+    private data class CacheEntry(
+        val appsWithDetails: List<AppItem>,
+        val timestamp: Long
+    )
+
+    private var cache: CacheEntry? = null
+
+    /**
+     * Get cached featured apps with details if not expired
+     */
+    fun get(): List<AppItem>? {
+        val entry = cache ?: return null
+        val currentTime = System.currentTimeMillis()
+        
+        // Check if entry has expired
+        if (currentTime - entry.timestamp > expirationTimeMillis) {
+            cache = null
+            return null
+        }
+        
+        return entry.appsWithDetails
+    }
+
+    /**
+     * Store featured apps with details
+     */
+    fun put(appsWithDetails: List<AppItem>) {
+        cache = CacheEntry(
+            appsWithDetails = appsWithDetails,
+            timestamp = System.currentTimeMillis()
+        )
+    }
+
+    /**
+     * Clear cache
+     */
+    fun clear() {
+        cache = null
     }
 }
