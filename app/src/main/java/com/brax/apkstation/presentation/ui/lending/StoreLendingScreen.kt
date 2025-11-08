@@ -58,6 +58,7 @@ import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.presentation.ui.lending.components.AppListItem
 import com.brax.apkstation.presentation.ui.lending.components.CategoriesListScreen
 import com.brax.apkstation.presentation.ui.lending.components.CategoryItem
+import com.brax.apkstation.presentation.ui.lending.components.FeaturedCarousel
 import com.brax.apkstation.presentation.ui.lending.components.LendingTopAppBar
 import com.brax.apkstation.presentation.ui.lending.components.NetworkAlertBanner
 import com.brax.apkstation.presentation.ui.lending.components.SectionTab
@@ -372,11 +373,39 @@ fun StoreLendingScreen(
                                 )
                             } else {
                                 // App list only - tabs are outside this section
+                                val isBraxPicksSection = uiState.selectedSection == SectionTab.BRAX_PICKS.queryName
+                                val featuredApps = if (isBraxPicksSection) uiState.apps.take(5) else emptyList()
+                                val remainingApps = if (isBraxPicksSection && uiState.apps.size > 5) {
+                                    uiState.apps.drop(5)
+                                } else if (!isBraxPicksSection) {
+                                    uiState.apps
+                                } else {
+                                    emptyList()
+                                }
+                                
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
                                     contentPadding = PaddingValues(bottom = 8.dp)
                                 ) {
-                                    items(uiState.apps, key = { it.packageName }) { app ->
+                                    // Featured carousel for BRAX picks section
+                                    if (featuredApps.isNotEmpty()) {
+                                        item {
+                                            FeaturedCarousel(
+                                                featuredApps = featuredApps,
+                                                onAppClick = { app ->
+                                                    val identifier =
+                                                        if (!app.uuid.isNullOrBlank()) app.uuid else app.packageName
+                                                    navigationActions.navigateToAppInfo(identifier)
+                                                },
+                                                onActionClick = { app ->
+                                                    viewModel.onAppActionButtonClick(app)
+                                                },
+                                                modifier = Modifier.padding(vertical = 16.dp)
+                                            )
+                                        }
+                                    }
+                                    
+                                    items(remainingApps, key = { it.packageName }) { app ->
                                         AppListItem(
                                             app = app,
                                             isConnected = uiState.isConnected,
