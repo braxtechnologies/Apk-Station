@@ -150,6 +150,7 @@ class StoreLendingViewModel @Inject constructor(
                     it.copy(
                         isLoading = false,
                         isRefreshing = false,
+                        showNetworkAlert = true,
                         errorMessage = "No network connection"
                     )
                 }
@@ -1082,10 +1083,48 @@ class StoreLendingViewModel @Inject constructor(
 
     /**
      * Handle connectivity changes
+     * Automatically reloads content when connection is restored
      */
     fun updateConnectivityStatus(isConnected: Boolean) {
         viewModelScope.launch {
-            _lendingUiState.update { it.copy(isConnected = isConnected) }
+            val wasDisconnected = !_lendingUiState.value.isConnected
+            Log.d("StoreLendingViewModel", "Connectivity status updated: isConnected=$isConnected, wasDisconnected=$wasDisconnected")
+            
+            _lendingUiState.update { 
+                it.copy(
+                    isConnected = isConnected,
+                    // Show alert when connection is lost, hide when restored
+                    showNetworkAlert = !isConnected
+                ) 
+            }
+            
+            Log.d("StoreLendingViewModel", "UI State after update: isConnected=${_lendingUiState.value.isConnected}, showNetworkAlert=${_lendingUiState.value.showNetworkAlert}")
+            
+            // Auto-reload content when connection is restored (was disconnected, now connected)
+            if (wasDisconnected && isConnected) {
+                Log.d("StoreLendingViewModel", "Connection restored - auto-reloading content")
+                
+                // Reload based on current mode
+                when {
+                    _lendingUiState.value.isCategoriesListMode -> {
+                        Log.d("StoreLendingViewModel", "Reloading categories")
+                        loadCategories()
+                    }
+                    _lendingUiState.value.isSearchMode && _lendingUiState.value.hasExecutedSearch -> {
+                        Log.d("StoreLendingViewModel", "Re-executing search: ${_lendingUiState.value.searchQuery}")
+                        executeSearch(_lendingUiState.value.searchQuery)
+                    }
+                    _lendingUiState.value.isFavoritesMode -> {
+                        Log.d("StoreLendingViewModel", "Reloading favorites")
+                        enterFavoritesMode()
+                    }
+                    else -> {
+                        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+                        Log.d("StoreLendingViewModel", "Reloading section: $section")
+                        retrieveAvailableAppsList(sort = section, isRefresh = true)
+                    }
+                }
+            }
         }
     }
 
@@ -1094,7 +1133,57 @@ class StoreLendingViewModel @Inject constructor(
      */
     fun showNetworkError() {
         viewModelScope.launch {
-            _lendingUiState.update { it.copy(errorMessage = "Network connection unavailable") }
+            _lendingUiState.update { 
+                it.copy(
+                    errorMessage = "Network connection unavailable",
+                    showNetworkAlert = true
+                ) 
+            }
+        }
+    }
+
+    /**
+     * Dismiss network alert banner
+     */
+    fun dismissNetworkAlert() {
+        viewModelScope.launch {
+            _lendingUiState.update { it.copy(showNetworkAlert = false) }
+        }
+    }
+
+    /**
+     * Retry connection - refresh the current view
+     */
+    fun retryConnection() {
+        viewModelScope.launch {
+            // Check current connection status
+            if (_lendingUiState.value.isConnected) {
+                // Connection is available, dismiss alert and reload
+                _lendingUiState.update { it.copy(showNetworkAlert = false) }
+                
+                when {
+                    _lendingUiState.value.isCategoriesListMode -> {
+                        loadCategories()
+                    }
+                    _lendingUiState.value.isSearchMode && _lendingUiState.value.hasExecutedSearch -> {
+                        executeSearch(_lendingUiState.value.searchQuery)
+                    }
+                    _lendingUiState.value.isFavoritesMode -> {
+                        enterFavoritesMode()
+                    }
+                    else -> {
+                        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+                        retrieveAvailableAppsList(sort = section, isRefresh = true)
+                    }
+                }
+            } else {
+                // Still no connection, show error
+                _lendingUiState.update { 
+                    it.copy(
+                        errorMessage = "Still no internet connection. Please check your network settings."
+                    ) 
+                }
+            }
         }
     }
 
@@ -1292,6 +1381,7 @@ data class LendingViewState(
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val isConnected: Boolean = true,
+    val showNetworkAlert: Boolean = false, // Show network connectivity alert banner
 
     val isSearchMode: Boolean = false,
     val searchQuery: String = "",
