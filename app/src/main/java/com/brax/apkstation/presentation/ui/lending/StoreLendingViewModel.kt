@@ -51,6 +51,9 @@ class StoreLendingViewModel @Inject constructor(
     
     // Section cache for BRAX Picks, Top Charts, New Releases
     private val sectionCache = SectionCache()
+    
+    // Featured apps details cache (with images for carousel)
+    private val featuredAppsDetailsCache = FeaturedAppsDetailsCache()
 
     private val _lendingUiState = MutableStateFlow(
         LendingViewState(
@@ -150,6 +153,7 @@ class StoreLendingViewModel @Inject constructor(
                     it.copy(
                         isLoading = false,
                         isRefreshing = false,
+                        showNetworkAlert = true,
                         errorMessage = "No network connection"
                     )
                 }
@@ -230,6 +234,11 @@ class StoreLendingViewModel @Inject constructor(
                                 monitorDownloadProgress(app.packageName)
                             }
                         }
+                        
+                        // Fetch featured app details with images for BRAX Picks section
+                        if (sort == "featured" && category == null) {
+                            fetchFeaturedAppsDetails(appItems)
+                        }
                     }
 
                     is Result.Error -> {
@@ -248,6 +257,86 @@ class StoreLendingViewModel @Inject constructor(
                 }
             } finally {
                 _lendingUiState.update { it.copy(isLoading = false, isRefreshing = false) }
+            }
+        }
+    }
+    
+    /**
+     * Fetch detailed information (including images) for the first 5 featured apps
+     * Results are cached for 5 minutes to avoid excessive API calls
+     */
+    private fun fetchFeaturedAppsDetails(appItems: List<AppItem>) {
+        viewModelScope.launch {
+            try {
+                // Check cache first
+                val cachedDetails = featuredAppsDetailsCache.get()
+                if (cachedDetails != null) {
+                    Log.d("StoreLendingViewModel", "Using cached featured apps details")
+                    // Update apps list with cached details
+                    val updatedApps = appItems.mapIndexed { index, app ->
+                        if (index < 5) {
+                            cachedDetails.getOrNull(index) ?: app
+                        } else {
+                            app
+                        }
+                    }
+                    _lendingUiState.update { it.copy(apps = updatedApps) }
+                    allApps = updatedApps
+                    return@launch
+                }
+                
+                // Fetch details for first 5 apps
+                val first5Apps = appItems.take(5)
+                val appsWithDetails = mutableListOf<AppItem>()
+                
+                first5Apps.forEach { app ->
+                    // Use UUID if available, otherwise use package name
+                    val uuid = app.uuid?.takeIf { it.isNotEmpty() }
+                    when (val result = apkRepository.getApkDetails(uuid = uuid, packageName = if (uuid == null) app.packageName else null)) {
+                        is Result.Success -> {
+                            val details = result.data
+                            // Create updated AppItem with images and excerpt
+                            appsWithDetails.add(
+                                app.copy(
+                                    images = details.images,
+                                    excerpt = details.excerpt?.substringBefore("\r\n")
+                                )
+                            )
+                            Log.d("StoreLendingViewModel", "Fetched details for ${app.name}, images: ${details.images.size}")
+                        }
+                        is Result.Error -> {
+                            Log.e("StoreLendingViewModel", "Failed to fetch details for ${app.name}: ${result.message}")
+                            // Keep app without images
+                            appsWithDetails.add(app)
+                        }
+                        is Result.Loading -> {
+                            // Keep app without images
+                            appsWithDetails.add(app)
+                        }
+                    }
+                }
+                
+                // Cache the enriched apps
+                featuredAppsDetailsCache.put(appsWithDetails)
+                
+                // Update UI with enriched apps
+                val updatedApps = appItems.mapIndexed { index, app ->
+                    if (index < 5) {
+                        appsWithDetails.getOrNull(index) ?: app
+                    } else {
+                        app
+                    }
+                }
+                
+                _lendingUiState.update { it.copy(apps = updatedApps) }
+                allApps = updatedApps
+                
+                // Update section cache with enriched data
+                sectionCache.put("featured", updatedApps)
+                
+            } catch (e: Exception) {
+                Log.e("StoreLendingViewModel", "Error fetching featured apps details", e)
+                // Continue with non-enriched apps
             }
         }
     }
@@ -871,6 +960,7 @@ class StoreLendingViewModel @Inject constructor(
                                             RequestDownloadUrlWorker.KEY_VERSION_CODE to -1
                                         )
                                     )
+                                    .addTag("request_${app.packageName}")
                                     .build()
 
                             workManager.enqueueUniqueWork(
@@ -1082,10 +1172,48 @@ class StoreLendingViewModel @Inject constructor(
 
     /**
      * Handle connectivity changes
+     * Automatically reloads content when connection is restored
      */
     fun updateConnectivityStatus(isConnected: Boolean) {
         viewModelScope.launch {
-            _lendingUiState.update { it.copy(isConnected = isConnected) }
+            val wasDisconnected = !_lendingUiState.value.isConnected
+            Log.d("StoreLendingViewModel", "Connectivity status updated: isConnected=$isConnected, wasDisconnected=$wasDisconnected")
+            
+            _lendingUiState.update { 
+                it.copy(
+                    isConnected = isConnected,
+                    // Show alert when connection is lost, hide when restored
+                    showNetworkAlert = !isConnected
+                ) 
+            }
+            
+            Log.d("StoreLendingViewModel", "UI State after update: isConnected=${_lendingUiState.value.isConnected}, showNetworkAlert=${_lendingUiState.value.showNetworkAlert}")
+            
+            // Auto-reload content when connection is restored (was disconnected, now connected)
+            if (wasDisconnected && isConnected) {
+                Log.d("StoreLendingViewModel", "Connection restored - auto-reloading content")
+                
+                // Reload based on current mode
+                when {
+                    _lendingUiState.value.isCategoriesListMode -> {
+                        Log.d("StoreLendingViewModel", "Reloading categories")
+                        loadCategories()
+                    }
+                    _lendingUiState.value.isSearchMode && _lendingUiState.value.hasExecutedSearch -> {
+                        Log.d("StoreLendingViewModel", "Re-executing search: ${_lendingUiState.value.searchQuery}")
+                        executeSearch(_lendingUiState.value.searchQuery)
+                    }
+                    _lendingUiState.value.isFavoritesMode -> {
+                        Log.d("StoreLendingViewModel", "Reloading favorites")
+                        enterFavoritesMode()
+                    }
+                    else -> {
+                        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+                        Log.d("StoreLendingViewModel", "Reloading section: $section")
+                        retrieveAvailableAppsList(sort = section, isRefresh = true)
+                    }
+                }
+            }
         }
     }
 
@@ -1094,7 +1222,57 @@ class StoreLendingViewModel @Inject constructor(
      */
     fun showNetworkError() {
         viewModelScope.launch {
-            _lendingUiState.update { it.copy(errorMessage = "Network connection unavailable") }
+            _lendingUiState.update { 
+                it.copy(
+                    errorMessage = "Network connection unavailable",
+                    showNetworkAlert = true
+                ) 
+            }
+        }
+    }
+
+    /**
+     * Dismiss network alert banner
+     */
+    fun dismissNetworkAlert() {
+        viewModelScope.launch {
+            _lendingUiState.update { it.copy(showNetworkAlert = false) }
+        }
+    }
+
+    /**
+     * Retry connection - refresh the current view
+     */
+    fun retryConnection() {
+        viewModelScope.launch {
+            // Check current connection status
+            if (_lendingUiState.value.isConnected) {
+                // Connection is available, dismiss alert and reload
+                _lendingUiState.update { it.copy(showNetworkAlert = false) }
+                
+                when {
+                    _lendingUiState.value.isCategoriesListMode -> {
+                        loadCategories()
+                    }
+                    _lendingUiState.value.isSearchMode && _lendingUiState.value.hasExecutedSearch -> {
+                        executeSearch(_lendingUiState.value.searchQuery)
+                    }
+                    _lendingUiState.value.isFavoritesMode -> {
+                        enterFavoritesMode()
+                    }
+                    else -> {
+                        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+                        retrieveAvailableAppsList(sort = section, isRefresh = true)
+                    }
+                }
+            } else {
+                // Still no connection, show error
+                _lendingUiState.update { 
+                    it.copy(
+                        errorMessage = "Still no internet connection. Please check your network settings."
+                    ) 
+                }
+            }
         }
     }
 
@@ -1260,7 +1438,9 @@ data class AppItem(
     val size: String? = null,
     val status: AppStatus = AppStatus.NOT_INSTALLED,
     val hasUpdate: Boolean = false,
-    val category: String = "Others"
+    val category: String = "Others",
+    val images: List<String> = emptyList(), // App screenshot images, populated for featured apps
+    val excerpt: String? = null // App description excerpt, populated for featured apps
 )
 
 /**
@@ -1292,6 +1472,7 @@ data class LendingViewState(
     val isLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val isConnected: Boolean = true,
+    val showNetworkAlert: Boolean = false, // Show network connectivity alert banner
 
     val isSearchMode: Boolean = false,
     val searchQuery: String = "",
@@ -1434,5 +1615,53 @@ private class SectionCache(
      */
     fun clearSection(sectionKey: String) {
         cache.remove(sectionKey)
+    }
+}
+
+/**
+ * Cache for featured apps details (with images)
+ * Caches for 5 minutes to avoid excessive API calls
+ */
+private class FeaturedAppsDetailsCache(
+    private val expirationTimeMillis: Long = 5 * 60 * 1000 // 5 minutes
+) {
+    private data class CacheEntry(
+        val appsWithDetails: List<AppItem>,
+        val timestamp: Long
+    )
+
+    private var cache: CacheEntry? = null
+
+    /**
+     * Get cached featured apps with details if not expired
+     */
+    fun get(): List<AppItem>? {
+        val entry = cache ?: return null
+        val currentTime = System.currentTimeMillis()
+        
+        // Check if entry has expired
+        if (currentTime - entry.timestamp > expirationTimeMillis) {
+            cache = null
+            return null
+        }
+        
+        return entry.appsWithDetails
+    }
+
+    /**
+     * Store featured apps with details
+     */
+    fun put(appsWithDetails: List<AppItem>) {
+        cache = CacheEntry(
+            appsWithDetails = appsWithDetails,
+            timestamp = System.currentTimeMillis()
+        )
+    }
+
+    /**
+     * Clear cache
+     */
+    fun clear() {
+        cache = null
     }
 }

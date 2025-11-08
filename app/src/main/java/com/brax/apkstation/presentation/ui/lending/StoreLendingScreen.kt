@@ -52,12 +52,15 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import android.util.Log
 import com.brax.apkstation.R
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.presentation.ui.lending.components.AppListItem
 import com.brax.apkstation.presentation.ui.lending.components.CategoriesListScreen
 import com.brax.apkstation.presentation.ui.lending.components.CategoryItem
+import com.brax.apkstation.presentation.ui.lending.components.FeaturedCarousel
 import com.brax.apkstation.presentation.ui.lending.components.LendingTopAppBar
+import com.brax.apkstation.presentation.ui.lending.components.NetworkAlertBanner
 import com.brax.apkstation.presentation.ui.lending.components.SectionTab
 import com.brax.apkstation.presentation.ui.lending.components.SectionTabs
 import com.brax.apkstation.presentation.ui.navigation.AppNavigationActions
@@ -111,6 +114,15 @@ fun StoreLendingScreen(
     DisposableEffect("network_monitor") {
         val connectivityManager =
             context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        // Check initial connectivity state immediately
+        val initialNetwork = connectivityManager.activeNetwork
+        val initialCapabilities = connectivityManager.getNetworkCapabilities(initialNetwork)
+        val isInitiallyConnected = initialCapabilities?.let {
+            it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                    it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        } ?: false
+        viewModel.updateConnectivityStatus(isInitiallyConnected)
 
         val networkRequest = NetworkRequest.Builder()
             .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
@@ -263,6 +275,15 @@ fun StoreLendingScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
+                // Network alert banner - shows when there's no connection
+                // Always show after tabs (or at top if in search/favorites mode) when network is unavailable
+                Log.d("StoreLendingScreen", "Rendering banner: isConnected=${uiState.isConnected}, showNetworkAlert=${uiState.showNetworkAlert}")
+                NetworkAlertBanner(
+                    isVisible = !uiState.isConnected,
+                    onRetry = { viewModel.retryConnection() },
+                    onDismiss = { viewModel.dismissNetworkAlert() }
+                )
+
                 // Content area with pull to refresh
                 PullToRefreshBox(
                     isRefreshing = uiState.isRefreshing,
@@ -352,11 +373,39 @@ fun StoreLendingScreen(
                                 )
                             } else {
                                 // App list only - tabs are outside this section
+                                val isBraxPicksSection = uiState.selectedSection == SectionTab.BRAX_PICKS.queryName
+                                val featuredApps = if (isBraxPicksSection) uiState.apps.take(5) else emptyList()
+                                val remainingApps = if (isBraxPicksSection && uiState.apps.size > 5) {
+                                    uiState.apps.drop(5)
+                                } else if (!isBraxPicksSection) {
+                                    uiState.apps
+                                } else {
+                                    emptyList()
+                                }
+                                
                                 LazyColumn(
                                     modifier = Modifier.fillMaxSize(),
                                     contentPadding = PaddingValues(bottom = 8.dp)
                                 ) {
-                                    items(uiState.apps, key = { it.packageName }) { app ->
+                                    // Featured carousel for BRAX picks section
+                                    if (featuredApps.isNotEmpty()) {
+                                        item {
+                                            FeaturedCarousel(
+                                                featuredApps = featuredApps,
+                                                onAppClick = { app ->
+                                                    val identifier =
+                                                        if (!app.uuid.isNullOrBlank()) app.uuid else app.packageName
+                                                    navigationActions.navigateToAppInfo(identifier)
+                                                },
+                                                onActionClick = { app ->
+                                                    viewModel.onAppActionButtonClick(app)
+                                                },
+                                                modifier = Modifier.padding(vertical = 16.dp)
+                                            )
+                                        }
+                                    }
+                                    
+                                    items(remainingApps, key = { it.packageName }) { app ->
                                         AppListItem(
                                             app = app,
                                             isConnected = uiState.isConnected,
