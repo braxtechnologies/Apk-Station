@@ -634,7 +634,8 @@ class StoreLendingViewModel @Inject constructor(
             )
         }
         searchJob?.cancel()
-//        filterApps() // Return to filtered category list
+        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+        retrieveAvailableAppsList(sort = section)
     }
 
     /**
@@ -714,7 +715,8 @@ class StoreLendingViewModel @Inject constructor(
             )
         }
         // Reload the normal app list
-//        filterApps()
+        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+        retrieveAvailableAppsList(sort = section)
     }
 
     fun selectSection(section: String) {
@@ -724,13 +726,21 @@ class StoreLendingViewModel @Inject constructor(
                     selectedSection = section
                 )
             }
-            if (section == SectionTab.CATEGORIES.queryName) {
-                // Show categories list
-                loadCategories()
-            } else {
-                // Load apps for the selected section
-                _lendingUiState.update { it.copy(isCategoriesListMode = false) }
-                retrieveAvailableAppsList(sort = section)
+            when (section) {
+                SectionTab.CATEGORIES.queryName -> {
+                    // Show categories list
+                    loadCategories()
+                }
+                SectionTab.MY_APPS.queryName -> {
+                    // Show installed apps from Apk Station
+                    _lendingUiState.update { it.copy(isCategoriesListMode = false) }
+                    loadInstalledApps()
+                }
+                else -> {
+                    // Load apps for the selected section
+                    _lendingUiState.update { it.copy(isCategoriesListMode = false) }
+                    retrieveAvailableAppsList(sort = section)
+                }
             }
         }
     }
@@ -790,57 +800,73 @@ class StoreLendingViewModel @Inject constructor(
     }
 
     /**
-     * Exit categories list mode
+     * Load apps that were installed through Apk Station
+     * Shows only apps that exist in the database and are currently installed on the device
      */
-    fun exitCategoriesListMode() {
-        _lendingUiState.update {
-            it.copy(
-                isCategoriesListMode = false,
-                selectedCategory = null
-            )
-        }
-        // Return to the selected section
-        selectSection(_lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName)
-    }
-
-    /**
-     * Select a category to filter apps
-     */
-    fun selectCategory(category: String?) {
+    fun loadInstalledApps() {
         viewModelScope.launch {
-            _lendingUiState.update {
-                it.copy(
-                    selectedCategory = category
-                )
+            _lendingUiState.update { it.copy(isLoading = true, errorMessage = null) }
+            
+            try {
+                // Get all apps from database that were downloaded/installed through Apk Station
+                val dbApps = apkRepository.getAllAppsFromDbNoFlow()
+                
+                // Filter to only show apps that are currently installed on the device
+                val installedAppItems = dbApps.mapNotNull { dbApp ->
+                    try {
+                        // Check if app is actually installed
+                        val packageInfo = context.packageManager.getPackageInfo(dbApp.packageName, 0)
+                        val installedVersionCode = packageInfo.longVersionCode.toInt()
+                        
+                        // Check if update is available
+                        val hasUpdate = dbApp.hasUpdate
+                        
+                        val status = if (hasUpdate) {
+                            AppStatus.UPDATE_AVAILABLE
+                        } else {
+                            AppStatus.INSTALLED
+                        }
+                        
+                        // Create AppItem for this installed app
+                        AppItem(
+                            uuid = dbApp.uuid,
+                            packageName = dbApp.packageName,
+                            name = dbApp.name,
+                            version = dbApp.version,
+                            icon = dbApp.icon,
+                            author = dbApp.author,
+                            rating = null,
+                            size = dbApp.size?.let { formatFileSize(it) },
+                            status = status,
+                            hasUpdate = hasUpdate,
+                            category = formatCategoryName(dbApp.category ?: "Others")
+                        )
+                    } catch (e: PackageManager.NameNotFoundException) {
+                        // App is not installed, skip it
+                        null
+                    }
+                }
+                
+                allApps = installedAppItems
+                _lendingUiState.update {
+                    it.copy(
+                        apps = installedAppItems,
+                        isLoading = false
+                    )
+                }
+                
+                Log.d("StoreLendingViewModel", "Loaded ${installedAppItems.size} installed apps from Apk Station")
+                
+            } catch (e: Exception) {
+                Log.e("StoreLendingViewModel", "Failed to load installed apps", e)
+                _lendingUiState.update {
+                    it.copy(
+                        errorMessage = "Failed to load installed apps: ${e.message}",
+                        isLoading = false
+                    )
+                }
             }
-            retrieveAvailableAppsList()
-//            filterApps()
         }
-    }
-
-    /**
-     * Filter apps based on search query and selected category
-     */
-    private fun filterApps() {
-        var filteredApps = allApps
-
-        // Filter by search query first (searches all apps)
-        val query = _lendingUiState.value.searchQuery
-        if (query.isNotEmpty()) {
-            filteredApps = filteredApps.filter { app ->
-                app.name.contains(query, ignoreCase = true) ||
-                        app.packageName.contains(query, ignoreCase = true) ||
-                        app.author?.contains(query, ignoreCase = true) == true
-            }
-        } else {
-            // Only filter by category if there's no search query
-            val category = _lendingUiState.value.selectedCategory
-            if (category != null) {
-                filteredApps = filteredApps.filter { it.category == category }
-            }
-        }
-
-        _lendingUiState.update { it.copy(apps = filteredApps) }
     }
 
     /**
@@ -1383,18 +1409,6 @@ class StoreLendingViewModel @Inject constructor(
             }
         } catch (e: Exception) {
             Log.e("StoreLendingViewModel", "Failed to clean up stale downloads", e)
-        }
-    }
-
-    /**
-     * Check if app is installed on the device
-     */
-    private fun checkIfInstalled(packageName: String): AppStatus {
-        return try {
-            context.packageManager.getPackageInfo(packageName, 0)
-            AppStatus.INSTALLED
-        } catch (_: PackageManager.NameNotFoundException) {
-            AppStatus.NOT_INSTALLED
         }
     }
 
