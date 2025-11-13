@@ -10,6 +10,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.Build
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -52,7 +53,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import android.util.Log
 import com.brax.apkstation.R
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.presentation.ui.lending.components.AppListItem
@@ -374,6 +374,8 @@ fun StoreLendingScreen(
                             } else {
                                 // App list only - tabs are outside this section
                                 val isBraxPicksSection = uiState.selectedSection == SectionTab.BRAX_PICKS.queryName
+                                        && !uiState.isSearchMode
+                                        && !uiState.isFavoritesMode
                                 val featuredApps = if (isBraxPicksSection) uiState.apps.take(5) else emptyList()
                                 val remainingApps = if (isBraxPicksSection && uiState.apps.size > 5) {
                                     uiState.apps.drop(5)

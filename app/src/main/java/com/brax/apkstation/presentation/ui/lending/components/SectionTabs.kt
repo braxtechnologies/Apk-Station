@@ -63,5 +63,6 @@ enum class SectionTab(val displayName: String, val queryName: String) {
     BRAX_PICKS("BRAX Picks", "featured"),
     TOP_CHARTS("Top Charts", "requests"),
     NEW_RELEASES("Recently Updated", "date"),
-    CATEGORIES("Categories", "categories")
+    CATEGORIES("Categories", "categories"),
+    MY_APPS("My Apps", "installed")
 }

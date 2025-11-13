@@ -193,17 +193,15 @@ class InstallStatusReceiver : BroadcastReceiver() {
             ?: return
         
         // Create notification channel (Android 8.0+)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "App Installation",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Notifications for app installation status"
-            }
-            notificationManager.createNotificationChannel(channel)
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "App Installation",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Notifications for app installation status"
         }
-        
+        notificationManager.createNotificationChannel(channel)
+
         // Build and show notification
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(title)

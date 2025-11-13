@@ -17,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
+import java.util.zip.ZipEntry
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -47,19 +48,27 @@ class SessionInstaller @Inject constructor(
                 Log.i(TAG, "Installing $packageName from ${file.absolutePath}, fileType: '${download.fileType}', downloadSessionId: $sessionId")
                 
                 // Determine if file is a bundle or single APK
-                // Most files from Lunr API are regular APKs, not bundles
+                // First check the file type from API
                 val isBundle = when (download.fileType?.lowercase()?.trim()) {
                     "xapk", "zip" -> {
                         Log.d(TAG, "File type indicates bundle (XAPK/ZIP)")
                         true
                     }
                     "apk", null, "" -> {
-                        Log.d(TAG, "File type indicates single APK or unknown, treating as APK")
-                        false
+                        // For APK or unknown types, check if it's actually a ZIP/bundle
+                        // by inspecting the file signature
+                        val actuallyIsZip = isZipFile(file)
+                        if (actuallyIsZip) {
+                            Log.i(TAG, "File type says APK but file is actually ZIP/XAPK - treating as bundle")
+                            true
+                        } else {
+                            Log.d(TAG, "File type indicates single APK")
+                            false
+                        }
                     }
                     else -> {
-                        Log.w(TAG, "Unknown file type '${download.fileType}', treating as APK")
-                        false
+                        Log.w(TAG, "Unknown file type '${download.fileType}', checking file signature")
+                        isZipFile(file)
                     }
                 }
                 
@@ -306,7 +315,7 @@ class SessionInstaller @Inject constructor(
         bundleFile.inputStream().buffered().use { fileInput ->
             // Create a custom ZipInputStream without path validation
             val zipInputStream = object : java.util.zip.ZipInputStream(fileInput) {
-                override fun getNextEntry(): java.util.zip.ZipEntry? {
+                override fun getNextEntry(): ZipEntry? {
                     return try {
                         super.getNextEntry()
                     } catch (e: java.util.zip.ZipException) {
@@ -326,11 +335,11 @@ class SessionInstaller @Inject constructor(
             
             while (true) {
                 val entry = try {
-                    var nextEntry: java.util.zip.ZipEntry? = null
+                    var nextEntry: ZipEntry? = null
                     // Try up to 5 times to get a valid entry (in case there are multiple bad entries)
                     repeat(5) {
                         try {
-                            nextEntry = zipInputStream.getNextEntry()
+                            nextEntry = zipInputStream.nextEntry
                             if (nextEntry != null) return@repeat
                         } catch (e: Exception) {
                             Log.w(TAG, "Attempt ${it + 1} failed: ${e.message}")
@@ -407,15 +416,10 @@ class SessionInstaller @Inject constructor(
         ).apply {
             setAppPackageName(packageName)
             setInstallLocation(PackageInfo.INSTALL_LOCATION_AUTO)
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                setOriginatingUid(Process.myUid())
-            }
-            
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                setInstallReason(PackageManager.INSTALL_REASON_USER)
-            }
-            
+
+            setOriginatingUid(Process.myUid())
+            setInstallReason(PackageManager.INSTALL_REASON_USER)
+
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
             }
@@ -473,6 +477,6 @@ class SessionInstaller @Inject constructor(
     }
     
     override fun isSupported(): Boolean {
-        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP
+        return true
     }
 }
