@@ -80,6 +80,36 @@ Apk Station provides a complete app store experience without compromising your p
 
 ## 👨‍💻 For Developers
 
+### Requirements
+
+Before building from source, ensure you have:
+
+* **Java Development Kit (JDK) 17** or higher
+* **Android SDK** with API level 30 or higher
+* **Git** for cloning the repository
+
+#### Installing JDK 17
+
+**macOS (using Homebrew):**
+```bash
+brew install openjdk@17
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt update
+sudo apt install openjdk-17-jdk
+```
+
+**Windows:**
+Download and install from [Oracle](https://www.oracle.com/java/technologies/downloads/#java17) or [Adoptium](https://adoptium.net/)
+
+**Verify Installation:**
+```bash
+java -version
+# Should show: openjdk version "17.x.x" or higher
+```
+
 ### Building from Source
 
 ```bash
@@ -87,6 +117,8 @@ git clone https://github.com/braxtechnologies/Apk-Station.git
 cd Apk-Station
 ./gradlew assembleRelease
 ```
+
+The built APK will be located at `app/build/outputs/apk/release/`
 
 ### Project Structure
 
