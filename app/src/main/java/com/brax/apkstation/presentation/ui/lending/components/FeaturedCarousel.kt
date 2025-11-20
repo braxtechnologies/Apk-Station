@@ -121,8 +121,8 @@ private fun FeaturedAppCard(
         Box(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Background image (first image from the app's images list)
-            val backgroundImage = app.images.firstOrNull()
+            // Background image
+            val backgroundImage = app.featuredImage
             val hasImage = backgroundImage != null
 
             if (hasImage) {
@@ -225,13 +225,13 @@ private fun FeaturedAppCard(
                         .fillMaxWidth()
                 ) {
                     // Excerpt text on top (if available)
-                    if (!app.excerpt.isNullOrEmpty()) {
+                    if (!app.title.isNullOrEmpty()) {
                         Column(
                             modifier = Modifier
                                 .padding(bottom = 16.dp)
                         ) {
                              Text(
-                                 text = app.excerpt,
+                                 text = app.title,
                                  style = MaterialTheme.typography.titleMedium,
                                  color = Color.Black,
                                  maxLines = 2,

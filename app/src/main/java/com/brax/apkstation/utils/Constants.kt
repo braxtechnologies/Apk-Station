@@ -14,13 +14,6 @@ object Constants {
     const val CODE = "code"
     const val RESPONSE = "response"
 
-    // DTO - TrustInfo
-    const val SCHEMA = "schema"
-    const val IS_SIGNED = "isSigned"
-    const val SIGNED_BY = "signedBy"
-    const val SIGNER_CERTIFICATE = "signerCertificate"
-    const val EXIST_IN_PLAY_MARKET = "existInPlayMarket"
-
     // DTO - DBApplication List
     const val APPLICATIONS = "applications"
     const val SECURE = "secure"
@@ -31,12 +24,8 @@ object Constants {
     // DTO - Locked Policies
     const val LOCKED_APPLICATIONS = "lockedApplications"
 
-    // API - Endpoints
-    const val API_METHOD_PUT_APPS_CONFIG = "putAppsConfig"
-    const val API_METHOD_GET_APP_LIST = "availableAppsList"
-    const val API_METHOD_GET_LOCKED_APPS = "lockedApps"
-    const val API_METHOD_GET_APP_DETAILS = "appDetails"
-
-    // API - Link (v2 API)
-    const val API_URL = "https://noc-noc.cc/apk/v2/"
+    // API - Link
+    // API URL is resolved dynamically via SRV record: "_https._tcp.api.braxtech.net"
+    // This constant is used as a placeholder for Retrofit initialization and as a fallback
+    const val API_URL = "https://api.braxtech.net/apk/v2/"
 }

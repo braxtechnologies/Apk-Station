@@ -10,9 +10,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.presentation.ui.lending.AppStatus
+import com.brax.apkstation.di.NetworkModule
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.NotificationHelper
 import com.brax.apkstation.utils.Result
+import com.brax.apkstation.utils.SrvResolver
 import com.brax.apkstation.utils.preferences.AppPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -39,12 +41,29 @@ class SettingsViewModel @Inject constructor(
 
     init {
         loadSettings()
+        loadCurrentApiUrl()
     }
 
     private fun loadSettings() {
         viewModelScope.launch {
             checkNotificationPermission()
             loadFavoritesEnabled()
+        }
+    }
+
+    private fun loadCurrentApiUrl() {
+        viewModelScope.launch {
+            // Try to get the cached URL from the interceptor first (fast)
+            val cachedUrl = NetworkModule.DynamicBaseUrlHolder.getCurrentCachedUrl()
+            
+            if (cachedUrl != null) {
+                // Already resolved and cached in the interceptor
+                _uiState.value = _uiState.value.copy(currentApiUrl = cachedUrl)
+            } else {
+                // Not yet resolved (no API calls made yet), resolve now in background
+                val apiUrl = SrvResolver.resolveApiUrl()
+                _uiState.value = _uiState.value.copy(currentApiUrl = apiUrl)
+            }
         }
     }
 
@@ -264,12 +283,38 @@ class SettingsViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * DEBUG: Clear SRV cache and re-resolve API URL
+     */
+    fun refreshApiUrl() {
+        viewModelScope.launch {
+            try {
+                // Clear both the interceptor cache and SRV resolver cache
+                NetworkModule.DynamicBaseUrlHolder.clearCache()
+                
+                // Trigger a new resolution to update the UI
+                val newApiUrl = SrvResolver.resolveApiUrl()
+                
+                // Sync the resolved URL back to DynamicBaseUrlHolder to keep caches consistent
+                NetworkModule.DynamicBaseUrlHolder.setResolvedUrl(newApiUrl)
+                
+                // Update UI with the resolved URL
+                _uiState.value = _uiState.value.copy(currentApiUrl = newApiUrl)
+                
+                _debugMessage.emit("✅ API URL refreshed and resolved: $newApiUrl")
+            } catch (e: Exception) {
+                _debugMessage.emit("❌ Error refreshing API URL: ${e.message}")
+            }
+        }
+    }
 }
 
 data class SettingsUiState(
     val notificationsEnabled: Boolean = false,
     val shouldRequestNotificationPermission: Boolean = false,
     val shouldOpenNotificationSettings: Boolean = false,
-    val favoritesEnabled: Boolean = false
+    val favoritesEnabled: Boolean = false,
+    val currentApiUrl: String = "Resolving..."
 )
 

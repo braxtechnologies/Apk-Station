@@ -66,10 +66,16 @@ data class ApkPreviewDto(
     
     @SerializedName("package")
     val packageName: String = "",
+
+    @SerializedName("featuredImage")
+    val featuredImage: String = "",
     
+    @SerializedName("title")
+    val title: String = "",
+
     @SerializedName("name")
     val name: String = "",
-    
+
     @SerializedName("author")
     val author: String = "",
     
