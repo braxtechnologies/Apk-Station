@@ -202,7 +202,9 @@ class StoreLendingViewModel @Inject constructor(
                             AppItem(
                                 uuid = apk.uuid,
                                 packageName = apk.packageName,
+                                title = apk.title,
                                 name = apk.name,
+                                featuredImage = apk.featuredImage,
                                 version = apk.version,
                                 icon = apk.icon,
                                 author = apk.author,
@@ -1444,7 +1446,9 @@ class StoreLendingViewModel @Inject constructor(
 data class AppItem(
     val uuid: String?, // May be null or empty when app is from search results
     val packageName: String,
+    val title: String? = null,
     val name: String,
+    val featuredImage: String? = null,
     val version: String? = null,
     val icon: String? = null,
     val author: String? = null,
