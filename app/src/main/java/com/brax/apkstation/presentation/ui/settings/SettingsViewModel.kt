@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.presentation.ui.lending.AppStatus
+import com.brax.apkstation.di.NetworkModule
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.NotificationHelper
 import com.brax.apkstation.utils.Result
@@ -52,8 +53,17 @@ class SettingsViewModel @Inject constructor(
 
     private fun loadCurrentApiUrl() {
         viewModelScope.launch {
-            val apiUrl = SrvResolver.resolveApiUrl()
-            _uiState.value = _uiState.value.copy(currentApiUrl = apiUrl)
+            // Try to get the cached URL from the interceptor first (fast)
+            val cachedUrl = NetworkModule.DynamicBaseUrlHolder.getCurrentCachedUrl()
+            
+            if (cachedUrl != null) {
+                // Already resolved and cached in the interceptor
+                _uiState.value = _uiState.value.copy(currentApiUrl = cachedUrl)
+            } else {
+                // Not yet resolved (no API calls made yet), resolve now in background
+                val apiUrl = SrvResolver.resolveApiUrl()
+                _uiState.value = _uiState.value.copy(currentApiUrl = apiUrl)
+            }
         }
     }
 
@@ -275,15 +285,19 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * DEBUG: Clear SRV cache and re-resolve API URL
+     * DEBUG: Clear SRV cache and re-resolve API URL on next request
      */
     fun refreshApiUrl() {
         viewModelScope.launch {
             try {
-                SrvResolver.clearCache()
+                // Clear both the interceptor cache and SRV resolver cache
+                NetworkModule.DynamicBaseUrlHolder.clearCache()
+                
+                // Trigger a new resolution to update the UI
                 val newApiUrl = SrvResolver.resolveApiUrl()
                 _uiState.value = _uiState.value.copy(currentApiUrl = newApiUrl)
-                _debugMessage.emit("✅ API URL refreshed: $newApiUrl")
+                
+                _debugMessage.emit("✅ Cache cleared! API URL will be re-resolved on next request: $newApiUrl")
             } catch (e: Exception) {
                 _debugMessage.emit("❌ Error refreshing API URL: ${e.message}")
             }

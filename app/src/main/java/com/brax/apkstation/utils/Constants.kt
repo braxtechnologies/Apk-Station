@@ -25,9 +25,7 @@ object Constants {
     const val LOCKED_APPLICATIONS = "lockedApplications"
 
     // API - Link
-    // Note: This constant is no longer used directly.
-    // API URL is now resolved dynamically via SRV record: "_https._tcp.api.braxtech.net"
-    // Fallback: https://api.braxtech.net/apk/
-    @Deprecated("Use SrvResolver.resolveApiUrl() instead", ReplaceWith("SrvResolver.resolveApiUrl()"))
-    const val API_URL = "https://api.braxtech.net/apk/"
+    // API URL is resolved dynamically via SRV record: "_https._tcp.api.braxtech.net"
+    // This constant is used as a placeholder for Retrofit initialization and as a fallback
+    const val API_URL = "https://api.braxtech.net/apk/v2/"
 }

@@ -9,13 +9,17 @@ import com.brax.apkstation.utils.SrvResolver
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.Strictness
+import android.util.Log
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
 import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
+import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
@@ -27,6 +31,91 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object NetworkModule {
+
+    /**
+     * Singleton holder for the dynamic base URL interceptor
+     * Allows access to clearCache() from outside the module
+     */
+    object DynamicBaseUrlHolder {
+        private const val TAG = "DynamicBaseUrl"
+        
+        @Volatile
+        private var resolvedBaseUrl: HttpUrl? = null
+        
+        private val defaultBaseUrl = Constants.API_URL.toHttpUrl()
+        
+        /**
+         * Get the current resolved URL or resolve it if not cached
+         */
+        fun getBaseUrl(): HttpUrl {
+            return resolvedBaseUrl ?: resolveBaseUrlSync().also { 
+                resolvedBaseUrl = it 
+            }
+        }
+        
+        /**
+         * Resolve base URL synchronously (called on background thread by OkHttp)
+         */
+        private fun resolveBaseUrlSync(): HttpUrl {
+            return try {
+                Log.d(TAG, "Resolving API URL via SRV...")
+                
+                // This runBlocking is OK because OkHttp already runs on a background thread
+                val url = runBlocking { 
+                    SrvResolver.resolveApiUrl()
+                }
+                
+                Log.i(TAG, "✅ Using API URL: $url")
+                url.toHttpUrl()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to resolve SRV, using default: ${defaultBaseUrl.toUrl()}", e)
+                defaultBaseUrl
+            }
+        }
+        
+        /**
+         * Force re-resolution of the base URL on next request
+         * This clears both the interceptor cache and SRV resolver cache
+         */
+        fun clearCache() {
+            Log.d(TAG, "Clearing API URL cache - will re-resolve on next request")
+            resolvedBaseUrl = null
+            SrvResolver.clearCache()
+        }
+        
+        /**
+         * Get the current cached URL (if available) without triggering resolution
+         */
+        fun getCurrentCachedUrl(): String? {
+            return resolvedBaseUrl?.toString()
+        }
+    }
+
+    /**
+     * Interceptor that dynamically resolves the base URL via SRV on first request
+     * This avoids blocking the main thread during app initialization
+     */
+    private class DynamicBaseUrlInterceptor : Interceptor {
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val originalRequest = chain.request()
+            
+            // Get or resolve the base URL (lazy initialization on first request)
+            val baseUrl = DynamicBaseUrlHolder.getBaseUrl()
+            
+            // Replace the base URL in the request
+            val newUrl = originalRequest.url.newBuilder()
+                .scheme(baseUrl.scheme)
+                .host(baseUrl.host)
+                .port(baseUrl.port)
+                .build()
+            
+            val newRequest = originalRequest.newBuilder()
+                .url(newUrl)
+                .build()
+            
+            return chain.proceed(newRequest)
+        }
+    }
 
     /**
      * Interceptor to fix malformed JSON from the API
@@ -87,6 +176,9 @@ object NetworkModule {
             readTimeout(200, TimeUnit.SECONDS) // 3+ minutes for download endpoint
             writeTimeout(30, TimeUnit.SECONDS)
             
+            // Add dynamic base URL interceptor (MUST be first to modify URLs before other interceptors)
+            addInterceptor(DynamicBaseUrlInterceptor())
+            
             // Add interceptor to fix malformed JSON responses
             addInterceptor(MalformedJsonFixInterceptor())
             
@@ -116,14 +208,10 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient, gson: Gson): Retrofit {
-        // Resolve API URL via SRV record with fallback to default
-        // Note: runBlocking is acceptable here as it's called once during DI initialization
-        val apiUrl = runBlocking { 
-            SrvResolver.resolveApiUrl() 
-        }
-        
+        // Use a placeholder base URL - the actual URL will be resolved dynamically
+        // by DynamicBaseUrlInterceptor on the first API request (non-blocking)
         return Retrofit.Builder()
-            .baseUrl(apiUrl)
+            .baseUrl(Constants.API_URL) // Placeholder, will be replaced by interceptor
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
