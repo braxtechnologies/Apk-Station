@@ -13,6 +13,7 @@ import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.NotificationHelper
 import com.brax.apkstation.utils.Result
+import com.brax.apkstation.utils.SrvResolver
 import com.brax.apkstation.utils.preferences.AppPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -39,12 +40,20 @@ class SettingsViewModel @Inject constructor(
 
     init {
         loadSettings()
+        loadCurrentApiUrl()
     }
 
     private fun loadSettings() {
         viewModelScope.launch {
             checkNotificationPermission()
             loadFavoritesEnabled()
+        }
+    }
+
+    private fun loadCurrentApiUrl() {
+        viewModelScope.launch {
+            val apiUrl = SrvResolver.resolveApiUrl()
+            _uiState.value = _uiState.value.copy(currentApiUrl = apiUrl)
         }
     }
 
@@ -264,12 +273,29 @@ class SettingsViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * DEBUG: Clear SRV cache and re-resolve API URL
+     */
+    fun refreshApiUrl() {
+        viewModelScope.launch {
+            try {
+                SrvResolver.clearCache()
+                val newApiUrl = SrvResolver.resolveApiUrl()
+                _uiState.value = _uiState.value.copy(currentApiUrl = newApiUrl)
+                _debugMessage.emit("✅ API URL refreshed: $newApiUrl")
+            } catch (e: Exception) {
+                _debugMessage.emit("❌ Error refreshing API URL: ${e.message}")
+            }
+        }
+    }
 }
 
 data class SettingsUiState(
     val notificationsEnabled: Boolean = false,
     val shouldRequestNotificationPermission: Boolean = false,
     val shouldOpenNotificationSettings: Boolean = false,
-    val favoritesEnabled: Boolean = false
+    val favoritesEnabled: Boolean = false,
+    val currentApiUrl: String = "Resolving..."
 )
 

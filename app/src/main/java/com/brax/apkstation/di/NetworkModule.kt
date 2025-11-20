@@ -5,6 +5,7 @@ import com.brax.apkstation.data.network.LunrApiService
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDeserializer
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDto
 import com.brax.apkstation.utils.Constants
+import com.brax.apkstation.utils.SrvResolver
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.Strictness
@@ -12,6 +13,7 @@ import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.components.SingletonComponent
+import kotlinx.coroutines.runBlocking
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
 import okhttp3.Response
@@ -114,8 +116,14 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient, gson: Gson): Retrofit {
+        // Resolve API URL via SRV record with fallback to default
+        // Note: runBlocking is acceptable here as it's called once during DI initialization
+        val apiUrl = runBlocking { 
+            SrvResolver.resolveApiUrl() 
+        }
+        
         return Retrofit.Builder()
-            .baseUrl(Constants.API_URL)
+            .baseUrl(apiUrl)
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()

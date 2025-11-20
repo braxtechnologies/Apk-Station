@@ -17,7 +17,8 @@ import retrofit2.http.Query
 
 /**
  * Lunr API Service - Apk Station endpoints
- * Base URL: https://noc-noc.cc/apk/v2/
+ * Base URL: Dynamically resolved via SRV record "_https._tcp.api.braxtech.net"
+ * Fallback: https://api.braxtech.net/apk/
  */
 interface LunrApiService {
 
