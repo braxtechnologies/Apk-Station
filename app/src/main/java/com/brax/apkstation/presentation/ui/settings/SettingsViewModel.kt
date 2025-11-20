@@ -285,7 +285,7 @@ class SettingsViewModel @Inject constructor(
     }
 
     /**
-     * DEBUG: Clear SRV cache and re-resolve API URL on next request
+     * DEBUG: Clear SRV cache and re-resolve API URL
      */
     fun refreshApiUrl() {
         viewModelScope.launch {
@@ -295,9 +295,14 @@ class SettingsViewModel @Inject constructor(
                 
                 // Trigger a new resolution to update the UI
                 val newApiUrl = SrvResolver.resolveApiUrl()
+                
+                // Sync the resolved URL back to DynamicBaseUrlHolder to keep caches consistent
+                NetworkModule.DynamicBaseUrlHolder.setResolvedUrl(newApiUrl)
+                
+                // Update UI with the resolved URL
                 _uiState.value = _uiState.value.copy(currentApiUrl = newApiUrl)
                 
-                _debugMessage.emit("✅ Cache cleared! API URL will be re-resolved on next request: $newApiUrl")
+                _debugMessage.emit("✅ API URL refreshed and resolved: $newApiUrl")
             } catch (e: Exception) {
                 _debugMessage.emit("❌ Error refreshing API URL: ${e.message}")
             }

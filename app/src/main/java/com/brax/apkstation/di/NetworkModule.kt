@@ -89,6 +89,19 @@ object NetworkModule {
         fun getCurrentCachedUrl(): String? {
             return resolvedBaseUrl?.toString()
         }
+        
+        /**
+         * Manually set the resolved base URL (used to sync caches after manual resolution)
+         * @param url The resolved URL string to cache
+         */
+        fun setResolvedUrl(url: String) {
+            try {
+                resolvedBaseUrl = url.toHttpUrl()
+                Log.d(TAG, "Manually set resolved URL: $url")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to set resolved URL: ${e.message}", e)
+            }
+        }
     }
 
     /**
