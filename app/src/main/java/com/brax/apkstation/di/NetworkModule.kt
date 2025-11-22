@@ -5,7 +5,6 @@ import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.data.network.LunrApiService
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDeserializer
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDto
-import com.brax.apkstation.di.NetworkModule.DynamicBaseUrlHolder.getBaseUrl
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.SrvResolver
 import com.google.gson.Gson
@@ -46,6 +45,7 @@ object NetworkModule {
         
         /**
          * Get the current resolved URL or resolve it if not cached
+         * Note: This should only be called from OkHttp background threads to avoid blocking
          */
         fun getBaseUrl(): HttpUrl {
             return resolvedBaseUrl ?: resolveBaseUrlSync().also { 
@@ -101,6 +101,56 @@ object NetworkModule {
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to set resolved URL: ${e.message}", e)
             }
+        }
+    }
+
+    /**
+     * Interceptor that dynamically replaces the base URL for API calls only.
+     * This allows SRV DNS resolution to happen lazily on OkHttp's background thread
+     * during the first API request, avoiding main thread blocking during app startup.
+     * 
+     * IMPORTANT: This interceptor only modifies URLs that match the placeholder base URL
+     * (Constants.API_URL). URLs from other domains (e.g., update.lcc.sh for downloads)
+     * are passed through unchanged.
+     */
+    private class DynamicBaseUrlInterceptor : Interceptor {
+        private val placeholderBaseUrl = Constants.API_URL.toHttpUrl()
+        
+        override fun intercept(chain: Interceptor.Chain): Response {
+            val originalRequest = chain.request()
+            val originalUrl = originalRequest.url
+            
+            // Only replace URLs that use our placeholder base URL
+            // This preserves download URLs from external domains (e.g., update.lcc.sh)
+            if (shouldReplaceUrl(originalUrl)) {
+                val resolvedBaseUrl = DynamicBaseUrlHolder.getBaseUrl()
+                
+                // Replace the base URL while preserving the path and query parameters
+                val newUrl = originalUrl.newBuilder()
+                    .scheme(resolvedBaseUrl.scheme)
+                    .host(resolvedBaseUrl.host)
+                    .port(resolvedBaseUrl.port)
+                    .build()
+                
+                val newRequest = originalRequest.newBuilder()
+                    .url(newUrl)
+                    .build()
+                
+                return chain.proceed(newRequest)
+            }
+            
+            // Pass through unchanged for non-API URLs
+            return chain.proceed(originalRequest)
+        }
+        
+        /**
+         * Determines if a URL should have its base replaced.
+         * Only replaces URLs matching our placeholder base URL pattern.
+         */
+        private fun shouldReplaceUrl(url: HttpUrl): Boolean {
+            return url.host == placeholderBaseUrl.host && 
+                   url.scheme == placeholderBaseUrl.scheme &&
+                   url.port == placeholderBaseUrl.port
         }
     }
 
@@ -163,6 +213,10 @@ object NetworkModule {
             readTimeout(200, TimeUnit.SECONDS) // 3+ minutes for download endpoint
             writeTimeout(30, TimeUnit.SECONDS)
             
+            // Add dynamic base URL interceptor to handle SRV resolution lazily
+            // IMPORTANT: This must be added first to modify requests before other interceptors
+            addInterceptor(DynamicBaseUrlInterceptor())
+            
             // Add interceptor to fix malformed JSON responses
             addInterceptor(MalformedJsonFixInterceptor())
             
@@ -192,8 +246,11 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient, gson: Gson): Retrofit {
+        // Use placeholder base URL - the DynamicBaseUrlInterceptor will replace it
+        // with the SRV-resolved URL on the first request (on OkHttp's background thread).
+        // This avoids blocking the main thread during dependency injection.
         return Retrofit.Builder()
-            .baseUrl(getBaseUrl())
+            .baseUrl(Constants.API_URL)
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
