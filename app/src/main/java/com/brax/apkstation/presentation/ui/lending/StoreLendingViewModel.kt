@@ -944,7 +944,7 @@ class StoreLendingViewModel @Inject constructor(
                         val apkDetails = result.data
 
                         // Check if versions are available
-                        if (apkDetails.versions.isEmpty()) {
+                        if (apkDetails.versions.isEmpty() || apkRepository.getDownload(apkDetails.packageName)?.url.isNullOrEmpty()) {
                             // App not yet cached - use RequestDownloadUrlWorker for potentially long request
                             Log.d(
                                 "StoreLendingViewModel",

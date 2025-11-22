@@ -1,15 +1,16 @@
 package com.brax.apkstation.di
 
+import android.util.Log
 import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.data.network.LunrApiService
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDeserializer
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDto
+import com.brax.apkstation.di.NetworkModule.DynamicBaseUrlHolder.getBaseUrl
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.SrvResolver
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
 import com.google.gson.Strictness
-import android.util.Log
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -19,7 +20,6 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.Interceptor
 import okhttp3.OkHttpClient
-import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.logging.HttpLoggingInterceptor
@@ -105,32 +105,6 @@ object NetworkModule {
     }
 
     /**
-     * Interceptor that dynamically resolves the base URL via SRV on first request
-     * This avoids blocking the main thread during app initialization
-     */
-    private class DynamicBaseUrlInterceptor : Interceptor {
-        override fun intercept(chain: Interceptor.Chain): Response {
-            val originalRequest = chain.request()
-            
-            // Get or resolve the base URL (lazy initialization on first request)
-            val baseUrl = DynamicBaseUrlHolder.getBaseUrl()
-            
-            // Replace the base URL in the request
-            val newUrl = originalRequest.url.newBuilder()
-                .scheme(baseUrl.scheme)
-                .host(baseUrl.host)
-                .port(baseUrl.port)
-                .build()
-            
-            val newRequest = originalRequest.newBuilder()
-                .url(newUrl)
-                .build()
-            
-            return chain.proceed(newRequest)
-        }
-    }
-
-    /**
      * Interceptor to fix malformed JSON from the API
      * Handles cases like: "excerpt": } (missing value)
      */
@@ -189,9 +163,6 @@ object NetworkModule {
             readTimeout(200, TimeUnit.SECONDS) // 3+ minutes for download endpoint
             writeTimeout(30, TimeUnit.SECONDS)
             
-            // Add dynamic base URL interceptor (MUST be first to modify URLs before other interceptors)
-            addInterceptor(DynamicBaseUrlInterceptor())
-            
             // Add interceptor to fix malformed JSON responses
             addInterceptor(MalformedJsonFixInterceptor())
             
@@ -221,10 +192,8 @@ object NetworkModule {
     @Provides
     @Singleton
     fun provideRetrofit(okHttpClient: OkHttpClient, gson: Gson): Retrofit {
-        // Use a placeholder base URL - the actual URL will be resolved dynamically
-        // by DynamicBaseUrlInterceptor on the first API request (non-blocking)
         return Retrofit.Builder()
-            .baseUrl(Constants.API_URL) // Placeholder, will be replaced by interceptor
+            .baseUrl(getBaseUrl())
             .client(okHttpClient)
             .addConverterFactory(GsonConverterFactory.create(gson))
             .build()
