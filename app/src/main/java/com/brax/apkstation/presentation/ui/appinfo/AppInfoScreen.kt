@@ -2,6 +2,7 @@ package com.brax.apkstation.presentation.ui.appinfo
 
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.drawable.Drawable
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.BackHandler
@@ -67,6 +68,7 @@ import com.brax.apkstation.presentation.ui.appinfo.components.AppHeaderSection
 import com.brax.apkstation.presentation.ui.appinfo.components.AppInfoSection
 import com.brax.apkstation.presentation.ui.appinfo.components.DescriptionSection
 import com.brax.apkstation.presentation.ui.appinfo.components.ScreenshotsSection
+import com.brax.apkstation.presentation.ui.appinfo.components.UnsupportedAppAlertBanner
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -312,35 +314,49 @@ fun AppInfoScreen(
             }
             
             uiState.appDetails != null -> {
-                AppDetailsContent(
-                    appDetails = uiState.appDetails!!,
-                    isConnected = uiState.isConnected,
-                    isDescriptionExpanded = isDescriptionExpanded,
-                    onToggleDescription = { isDescriptionExpanded = !isDescriptionExpanded },
-                    onInstallClick = { viewModel.installApp() },
-                    onOpenClick = {
-                        val intent = context.packageManager.getLaunchIntentForPackage(uiState.appDetails!!.packageName)
-                        intent?.let { context.startActivity(it) }
-                    },
-                    onUninstallClick = {
-                        // Launch system uninstall dialog
-                        val uninstallIntent = viewModel.createUninstallIntent()
-                        if (uninstallIntent != null) {
-                            try {
-                                context.startActivity(uninstallIntent)
-                            } catch (e: Exception) {
-                                Log.e("AppInfoScreen", "Failed to start uninstall", e)
+                val isUnsupportedApp = uiState.appDetails!!.uuid == null
+                Log.d("AppInfoScreen", "Showing app details - UUID: ${uiState.appDetails!!.uuid}, isUnsupportedApp: $isUnsupportedApp")
+                
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(paddingValues)
+                ) {
+                    // Show warning banner if app is not available in Apk Station (UUID is null)
+                    UnsupportedAppAlertBanner(
+                        isVisible = isUnsupportedApp
+                    )
+                    
+                    AppDetailsContent(
+                        appDetails = uiState.appDetails!!,
+                        isConnected = uiState.isConnected,
+                        isDescriptionExpanded = isDescriptionExpanded,
+                        onToggleDescription = { isDescriptionExpanded = !isDescriptionExpanded },
+                        onInstallClick = { viewModel.installApp() },
+                        onOpenClick = {
+                            val intent = context.packageManager.getLaunchIntentForPackage(uiState.appDetails!!.packageName)
+                            intent?.let { context.startActivity(it) }
+                        },
+                        onUninstallClick = {
+                            // Launch system uninstall dialog
+                            val uninstallIntent = viewModel.createUninstallIntent()
+                            if (uninstallIntent != null) {
+                                try {
+                                    context.startActivity(uninstallIntent)
+                                } catch (e: Exception) {
+                                    Log.e("AppInfoScreen", "Failed to start uninstall", e)
+                                }
                             }
-                        }
-                    },
-                    onCancelClick = { viewModel.cancelDownload() },
-                    onScreenshotClick = { screenshotIndex ->
-                        uiState.appDetails?.images?.takeIf { it.isNotEmpty() }?.let { images ->
-                            onImageClick(images, screenshotIndex)
-                        }
-                    },
-                    paddingValues = paddingValues
-                )
+                        },
+                        onCancelClick = { viewModel.cancelDownload() },
+                        onScreenshotClick = { screenshotIndex ->
+                            uiState.appDetails?.images?.takeIf { it.isNotEmpty() }?.let { images ->
+                                onImageClick(images, screenshotIndex)
+                            }
+                        },
+                        paddingValues = PaddingValues(0.dp)
+                    )
+                }
             }
             
             else -> {
@@ -470,9 +486,7 @@ private fun AppDetailsContent(
     paddingValues: PaddingValues
 ) {
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(paddingValues),
+        modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -480,12 +494,12 @@ private fun AppDetailsContent(
         item {
             AppHeaderSection(appDetails)
         }
-        
+
         // App info (rating, size, content rating)
         item {
             AppInfoSection(appDetails)
         }
-        
+
         // Action buttons
         item {
             AppActionButtons(
@@ -497,7 +511,7 @@ private fun AppDetailsContent(
                 onCancelClick = onCancelClick
             )
         }
-        
+
         // Screenshots
         if (!appDetails.images.isNullOrEmpty()) {
             item {
@@ -507,14 +521,16 @@ private fun AppDetailsContent(
                 )
             }
         }
-        
+
         // Description
         item {
-            DescriptionSection(
-                description = appDetails.description ?: "",
-                isExpanded = isDescriptionExpanded,
-                onToggle = onToggleDescription
-            )
+            if (appDetails.description.isNullOrEmpty().not()) {
+                DescriptionSection(
+                    description = appDetails.description,
+                    isExpanded = isDescriptionExpanded,
+                    onToggle = onToggleDescription
+                )
+            }
         }
     }
 }
@@ -527,6 +543,7 @@ data class AppDetailsData(
     val version: String?, // Latest version available in store
     val versionCode: Int?, // Latest version code available in store
     val icon: String?,
+    val iconDrawable: Drawable? = null,
     val author: String?,
     val rating: String?,
     val size: String?,

@@ -16,23 +16,28 @@ import com.brax.apkstation.presentation.ui.appinfo.AppDetailsData
 
 @Composable
 fun AppInfoSection(appDetails: AppDetailsData) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceEvenly
-    ) {
-        InfoItem(
-            label = stringResource(R.string.rating),
-            value = appDetails.rating ?: "-"
-        )
-        InfoItem(
-            label = stringResource(R.string.size),
-            value = appDetails.size ?: "-"
-        )
-        InfoItem(
-            label = stringResource(R.string.pegi),
-            value = appDetails.contentRating ?: "-"
-        )
-    }
+    val hasAnyInfo = appDetails.size.isNullOrEmpty().not()
+            || appDetails.rating.isNullOrEmpty().not()
+            || appDetails.contentRating.isNullOrEmpty().not()
+
+    if (hasAnyInfo)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            InfoItem(
+                label = stringResource(R.string.rating),
+                value = appDetails.rating ?: "-"
+            )
+            InfoItem(
+                label = stringResource(R.string.size),
+                value = appDetails.size ?: "-"
+            )
+            InfoItem(
+                label = stringResource(R.string.pegi),
+                value = appDetails.contentRating ?: "-"
+            )
+        }
 }
 
 @Composable
