@@ -236,20 +236,44 @@ class CategoryAppsViewModel @Inject constructor(
                         val apkDetails = result.data
                         val latestVersion = apkDetails.versions.firstOrNull()
 
-                        // Create download entry using the companion method
-                        // URL will be filled by RequestDownloadUrlWorker
-                        val download = Download.fromApkDetails(
-                            apkDetails,
-                            isInstalled = false,
-                            isUpdate = app.hasUpdate
-                        )
+                        // Create download entry (URL will be filled by RequestDownloadUrlWorker)
+                        val download = if (latestVersion != null) {
+                            // Use companion method if version info is available
+                            Download.fromApkDetails(
+                                apkDetails,
+                                isInstalled = false,
+                                isUpdate = app.hasUpdate
+                            )
+                        } else {
+                            // Fallback if no version info (rare case)
+                            Download(
+                                packageName = apkDetails.packageName,
+                                url = null,
+                                version = "Latest",
+                                versionCode = 0,
+                                isInstalled = false,
+                                isUpdate = app.hasUpdate,
+                                displayName = apkDetails.name,
+                                icon = apkDetails.icon,
+                                status = DownloadStatus.QUEUED,
+                                progress = 0,
+                                fileSize = 0L,
+                                speed = 0L,
+                                timeRemaining = 0L,
+                                totalFiles = 1,
+                                fileType = "application/vnd.android.package-archive",
+                                downloadedFiles = 0,
+                                apkLocation = "",
+                                md5 = null
+                            )
+                        }
 
                         // Save to database
                         apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)
                         apkRepository.saveDownloadToDb(download)
 
                         // ALWAYS use RequestDownloadUrlWorker to fetch the download URL
-                        // This worker will fetch the URL from /download endpoint and then enqueue DownloadWorker
+                        // This worker calls /download endpoint and then enqueues DownloadWorker
                         val sessionId = System.currentTimeMillis()
                         val requestWorkRequest = OneTimeWorkRequestBuilder<RequestDownloadUrlWorker>()
                             .setInputData(

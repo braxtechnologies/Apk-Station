@@ -417,7 +417,7 @@ fun StoreLendingScreen(
                                                     if (!app.uuid.isNullOrBlank()) app.uuid else app.packageName
                                                 navigationActions.navigateToAppInfo(identifier)
                                             },
-                                            onActionClick = { viewModel::onAppActionButtonClick }
+                                            onActionClick = { viewModel.onAppActionButtonClick(app) }
                                         )
                                     }
                                 }

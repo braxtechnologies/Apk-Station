@@ -8,14 +8,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
-import com.brax.apkstation.data.workers.DownloadWorker
 import com.brax.apkstation.data.workers.RequestDownloadUrlWorker
 import com.brax.apkstation.presentation.ui.lending.components.SectionTab
 import com.brax.apkstation.utils.Constants
@@ -942,19 +940,21 @@ class StoreLendingViewModel @Inject constructor(
                     apkRepository.getApkDetails(uuid = uuid, packageName = packageName)) {
                     is Result.Success -> {
                         val apkDetails = result.data
+                        val latestVersion = apkDetails.versions.firstOrNull()
 
-                        // Check if versions are available
-                        if (apkDetails.versions.isEmpty()) {
-                            // App not yet cached - use RequestDownloadUrlWorker for potentially long request
-                            Log.d(
-                                "StoreLendingViewModel",
-                                "No versions for ${app.packageName}, using RequestDownloadUrlWorker"
+                        // Create download entry (URL will be filled by RequestDownloadUrlWorker)
+                        val download = if (latestVersion != null) {
+                            // Use companion method if version info is available
+                            Download.fromApkDetails(
+                                apkDetails,
+                                isInstalled = false,
+                                isUpdate = app.hasUpdate
                             )
-
-                            // Create download entry first (without URL)
-                            val download = Download(
+                        } else {
+                            // Fallback if no version info (rare case)
+                            Download(
                                 packageName = apkDetails.packageName,
-                                url = null, // Will be filled by RequestDownloadUrlWorker
+                                url = null,
                                 version = "Latest",
                                 versionCode = 0,
                                 isInstalled = false,
@@ -972,65 +972,41 @@ class StoreLendingViewModel @Inject constructor(
                                 apkLocation = "",
                                 md5 = null
                             )
-
-                            apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)
-                            apkRepository.saveDownloadToDb(download)
-
-                            // Enqueue RequestDownloadUrlWorker (handles 3-minute timeout)
-                            val sessionId = System.currentTimeMillis()
-                            val requestWorkRequest =
-                                OneTimeWorkRequestBuilder<RequestDownloadUrlWorker>()
-                                    .setInputData(
-                                        workDataOf(
-                                            RequestDownloadUrlWorker.KEY_PACKAGE_NAME to app.packageName,
-                                            RequestDownloadUrlWorker.KEY_SESSION_ID to sessionId,
-                                            RequestDownloadUrlWorker.KEY_UUID to uuid,
-                                            RequestDownloadUrlWorker.KEY_VERSION_CODE to -1
-                                        )
-                                    )
-                                    .addTag("request_${app.packageName}")
-                                    .build()
-
-                            workManager.enqueueUniqueWork(
-                                "request_download_${app.packageName}_session_$sessionId",
-                                ExistingWorkPolicy.REPLACE,
-                                requestWorkRequest
-                            )
-
-                            // Monitor the download process
-                            monitorDownloadProgress(app.packageName)
-                        } else {
-                            // Normal case: versions available, proceed as before
-                            val download = Download.fromApkDetails(
-                                apkDetails,
-                                false, // not installed
-                                app.hasUpdate // true if this is an update
-                            )
-
-                            // Save to database
-                            apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)
-                            apkRepository.saveDownloadToDb(download)
-
-                            // Enqueue download worker
-                            val workRequest =
-                                OneTimeWorkRequestBuilder<DownloadWorker>()
-                                    .setInputData(
-                                        workDataOf(
-                                            DownloadWorker.KEY_PACKAGE_NAME to app.packageName
-                                        )
-                                    )
-                                    .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                                    .build()
-
-                            workManager.enqueueUniqueWork(
-                                "download_${app.packageName}",
-                                ExistingWorkPolicy.KEEP,
-                                workRequest
-                            )
-
-                            // Start monitoring download progress
-                            monitorDownloadProgress(app.packageName)
                         }
+
+                        // Save to database
+                        apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)
+                        apkRepository.saveDownloadToDb(download)
+
+                        // ALWAYS use RequestDownloadUrlWorker to fetch the download URL
+                        // This worker calls /download endpoint and then enqueues DownloadWorker
+                        val sessionId = System.currentTimeMillis()
+                        val requestWorkRequest =
+                            OneTimeWorkRequestBuilder<RequestDownloadUrlWorker>()
+                                .setInputData(
+                                    workDataOf(
+                                        RequestDownloadUrlWorker.KEY_PACKAGE_NAME to app.packageName,
+                                        RequestDownloadUrlWorker.KEY_SESSION_ID to sessionId,
+                                        RequestDownloadUrlWorker.KEY_UUID to uuid,
+                                        RequestDownloadUrlWorker.KEY_VERSION_CODE to (latestVersion?.versionCode ?: -1)
+                                    )
+                                )
+                                .addTag("request_${app.packageName}")
+                                .build()
+
+                        workManager.enqueueUniqueWork(
+                            "request_download_${app.packageName}_session_$sessionId",
+                            ExistingWorkPolicy.REPLACE,
+                            requestWorkRequest
+                        )
+
+                        Log.d(
+                            "StoreLendingViewModel",
+                            "Enqueued RequestDownloadUrlWorker for ${app.packageName} with versionCode: ${latestVersion?.versionCode ?: -1}"
+                        )
+
+                        // Monitor the download process
+                        monitorDownloadProgress(app.packageName)
                     }
 
                     is Result.Error -> {
