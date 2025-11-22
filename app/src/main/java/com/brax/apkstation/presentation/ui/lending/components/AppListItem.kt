@@ -64,11 +64,19 @@ fun AppListItem(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = app.icon,
-                    contentDescription = app.name,
-                    modifier = Modifier.size(56.dp)
-                )
+                if (app.icon != null) {
+                    AsyncImage(
+                        model = app.icon,
+                        contentDescription = app.name,
+                        modifier = Modifier.size(56.dp)
+                    )
+                } else if (app.iconDrawable != null) {
+                    AsyncImage(
+                        model = app.iconDrawable,
+                        contentDescription = app.name,
+                        modifier = Modifier.size(56.dp)
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.width(12.dp))

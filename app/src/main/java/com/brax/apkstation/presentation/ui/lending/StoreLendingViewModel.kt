@@ -1,7 +1,9 @@
 package com.brax.apkstation.presentation.ui.lending
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.graphics.drawable.Drawable
 import android.util.Log
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
@@ -11,6 +13,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
@@ -732,7 +735,7 @@ class StoreLendingViewModel @Inject constructor(
                     loadCategories()
                 }
                 SectionTab.MY_APPS.queryName -> {
-                    // Show installed apps from Apk Station
+                    // Show all installed apps (from Apk Station and other sources)
                     _lendingUiState.update { it.copy(isCategoriesListMode = false) }
                     loadInstalledApps()
                 }
@@ -800,8 +803,9 @@ class StoreLendingViewModel @Inject constructor(
     }
 
     /**
-     * Load apps that were installed through Apk Station
-     * Shows only apps that exist in the database and are currently installed on the device
+     * Load all installed apps on the device (excluding system apps)
+     * Shows both apps installed through Apk Station (with full metadata from DB)
+     * and other installed apps (with basic info from PackageManager)
      */
     fun loadInstalledApps() {
         viewModelScope.launch {
@@ -811,51 +815,92 @@ class StoreLendingViewModel @Inject constructor(
                 // Get all apps from database that were downloaded/installed through Apk Station
                 val dbApps = apkRepository.getAllAppsFromDbNoFlow()
                 
-                // Filter to only show apps that are currently installed on the device
-                val installedAppItems = dbApps.mapNotNull { dbApp ->
-                    try {
-                        // Check if app is actually installed
-                        val packageInfo = context.packageManager.getPackageInfo(dbApp.packageName, 0)
-                        val installedVersionCode = packageInfo.longVersionCode.toInt()
-                        
-                        // Check if update is available
-                        val hasUpdate = dbApp.hasUpdate
-                        
-                        val status = if (hasUpdate) {
-                            AppStatus.UPDATE_AVAILABLE
-                        } else {
-                            AppStatus.INSTALLED
-                        }
-                        
-                        // Create AppItem for this installed app
-                        AppItem(
-                            uuid = dbApp.uuid,
-                            packageName = dbApp.packageName,
-                            name = dbApp.name,
-                            version = dbApp.version,
-                            icon = dbApp.icon,
-                            author = dbApp.author,
-                            rating = null,
-                            size = dbApp.size?.let { formatFileSize(it) },
-                            status = status,
-                            hasUpdate = hasUpdate,
-                            category = formatCategoryName(dbApp.category ?: "Others")
-                        )
-                    } catch (e: PackageManager.NameNotFoundException) {
-                        // App is not installed, skip it
-                        null
-                    }
-                }
+                // Create a map of package names to DBApplication for quick lookup
+                val dbAppsMap = dbApps.associateBy { it.packageName }
                 
-                allApps = installedAppItems
+                // Get all installed apps from device
+                val packageManager = context.packageManager
+                val installedPackages = packageManager.getInstalledPackages(0)
+                
+                // Filter and convert to AppItem
+                val allInstalledApps = installedPackages
+                    .filter { it.packageName != BuildConfig.APPLICATION_ID }
+                    .mapNotNull { packageInfo ->
+                        val packageName = packageInfo.packageName
+
+                        // Skip system apps (apps that came pre-installed with the device)
+                        // applicationInfo is always non-null for installed packages, but marked nullable in SDK
+                        val appInfo = packageInfo.applicationInfo ?: return@mapNotNull null
+                        val isSystemApp = (appInfo.flags and ApplicationInfo.FLAG_SYSTEM) != 0
+                        if (isSystemApp) {
+                            return@mapNotNull null
+                        }
+
+                        // Check if this app is in our database (installed via Apk Station)
+                        val dbApp = dbAppsMap[packageName]
+
+                        if (dbApp != null) {
+                            // App is in database - use full metadata from DB
+                            val hasUpdate = dbApp.hasUpdate
+
+                            val status = if (hasUpdate) {
+                                AppStatus.UPDATE_AVAILABLE
+                            } else {
+                                AppStatus.INSTALLED
+                            }
+
+                            AppItem(
+                                uuid = dbApp.uuid,
+                                packageName = dbApp.packageName,
+                                name = dbApp.name,
+                                version = packageInfo.versionName ?: dbApp.version,
+                                icon = dbApp.icon,
+                                author = dbApp.author,
+                                rating = null,
+                                size = dbApp.size?.let { formatFileSize(it) },
+                                status = status,
+                                hasUpdate = hasUpdate,
+                                category = formatCategoryName(dbApp.category ?: "Others")
+                            )
+                        } else {
+                            // App NOT in database - use PackageManager to get basic info
+                            val appName = packageManager.getApplicationLabel(appInfo).toString()
+                            val versionName = packageInfo.versionName ?: "Unknown"
+
+                            // Get app icon as drawable (we can't easily convert to URL, so leave as null)
+                            // The AppInfo screen will handle fetching icon from API
+
+                            AppItem(
+                                uuid = null, // No UUID - will use packageName for navigation
+                                packageName = packageName,
+                                name = appName,
+                                version = versionName,
+                                iconDrawable = appInfo.loadIcon(packageManager),
+                                author = null,
+                                rating = null,
+                                size = null, // Size unknown without API data
+                                status = AppStatus.INSTALLED,
+                                hasUpdate = false, // Can't determine without API data
+                                category = "Others" // Category unknown without API data
+                            )
+                        }
+                    }.sortedBy { it.name.lowercase() } // Sort alphabetically by app name
+
+                allApps = allInstalledApps
                 _lendingUiState.update {
                     it.copy(
-                        apps = installedAppItems,
+                        apps = allInstalledApps,
                         isLoading = false
                     )
                 }
                 
-                Log.d("StoreLendingViewModel", "Loaded ${installedAppItems.size} installed apps from Apk Station")
+                val dbAppCount = allInstalledApps.count { it.uuid != null }
+                val otherAppCount = allInstalledApps.size - dbAppCount
+                
+                Log.d(
+                    "StoreLendingViewModel",
+                    "Loaded ${allInstalledApps.size} total installed apps ($dbAppCount from Apk Station, $otherAppCount from other sources)"
+                )
                 
             } catch (e: Exception) {
                 Log.e("StoreLendingViewModel", "Failed to load installed apps", e)
@@ -1427,6 +1472,7 @@ data class AppItem(
     val featuredImage: String? = null,
     val version: String? = null,
     val icon: String? = null,
+    val iconDrawable: Drawable? = null,
     val author: String? = null,
     val rating: String? = null,
     val size: String? = null,

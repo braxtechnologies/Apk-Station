@@ -41,14 +41,25 @@ fun AppHeaderSection(appDetails: AppDetailsData) {
             modifier = Modifier.size(100.dp),
             contentAlignment = Alignment.Center
         ) {
-            AsyncImage(
-                model = appDetails.icon,
-                contentDescription = appDetails.name,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(16.dp)),
-                contentScale = ContentScale.Crop
-            )
+            if (appDetails.icon != null) {
+                AsyncImage(
+                    model = appDetails.icon,
+                    contentDescription = appDetails.name,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            } else if (appDetails.iconDrawable != null) {
+                AsyncImage(
+                    model = appDetails.iconDrawable,
+                    contentDescription = appDetails.name,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Crop
+                )
+            }
         }
 
         Spacer(modifier = Modifier.width(16.dp))

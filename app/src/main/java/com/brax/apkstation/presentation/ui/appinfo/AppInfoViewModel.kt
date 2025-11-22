@@ -200,7 +200,7 @@ class AppInfoViewModel @Inject constructor(
                     }
 
                     is Result.Error -> {
-                        _uiState.update { it.copy(errorMessage = result.message) }
+                        handleError(uuid, result)
                     }
 
                     is Result.Loading -> {
@@ -325,6 +325,47 @@ class AppInfoViewModel @Inject constructor(
                     val errorMsg = "Failed to start download: ${e.message}"
                     _uiState.update { it.copy(errorMessage = errorMsg) }
                 }
+            }
+        }
+    }
+
+    private fun handleError(packageName: String?, result: Result.Error) {
+        if (packageName == null) {
+            Log.e("AppInfoViewModel", "Failed to load app details: ${result.message}")
+
+            _uiState.update { it.copy(errorMessage = result.message) }
+        } else {
+            val packageManager = context.packageManager
+            val packageInfo = packageManager.getPackageInfo(packageName, 0)
+            val appInfo = packageInfo.applicationInfo
+
+            if (appInfo == null) {
+                _uiState.update { it.copy(errorMessage = result.message) }
+            } else {
+                val appName = packageManager.getApplicationLabel(appInfo).toString()
+
+                val appDetailsData = AppDetailsData(
+                    uuid = null,
+                    packageName = appInfo.packageName,
+                    name = appName,
+                    version = packageInfo.versionName,
+                    versionCode = packageInfo.longVersionCode.toInt(),
+                    icon = null,
+                    iconDrawable = appInfo.loadIcon(packageManager),
+                    author = null,
+                    rating = null,
+                    size = null,
+                    contentRating = null,
+                    description = appInfo.loadDescription(packageManager)?.toString(),
+                    images = null,
+                    status = AppStatus.INSTALLED,
+                    hasUpdate = false,
+                    latestVersionCode = packageInfo.longVersionCode.toInt(),
+                    installedVersion = packageInfo.versionName,
+                    installedVersionCode = packageInfo.longVersionCode.toInt()
+                )
+
+                _uiState.update { it.copy(appDetails = appDetailsData) }
             }
         }
     }
