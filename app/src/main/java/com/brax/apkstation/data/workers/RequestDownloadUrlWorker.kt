@@ -88,6 +88,7 @@ class RequestDownloadUrlWorker @AssistedInject constructor(
                                             DownloadWorker.KEY_SESSION_ID to sessionId
                                         )
                                     )
+                                    .addTag("download_$packageName")
                                     .build()
                                 
                                 workManager.enqueueUniqueWork(

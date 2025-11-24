@@ -25,6 +25,7 @@ import com.brax.apkstation.utils.formatFileSize
 import com.brax.apkstation.utils.preferences.AppPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -82,6 +83,11 @@ class StoreLendingViewModel @Inject constructor(
 
     private var searchJob: Job? = null
 
+    init {
+        // Clean up stale downloads on initialization
+        cleanupStaleDownloads()
+    }
+
     fun onAppActionButtonClick(app: AppItem) {
         when (app.status) {
             AppStatus.INSTALLED -> {
@@ -116,11 +122,6 @@ class StoreLendingViewModel @Inject constructor(
         isRefresh: Boolean = false
     ) {
         viewModelScope.launch {
-            // Clean up stale downloads first (only on initial load, not on refresh)
-            if (!isRefresh) {
-                cleanupStaleDownloads()
-            }
-
             // Check if we have network connection
             val isConnected = _lendingUiState.value.isConnected
 
@@ -1396,50 +1397,70 @@ class StoreLendingViewModel @Inject constructor(
      * Clean up stale downloads that might be stuck in QUEUED/DOWNLOADING/VERIFYING state
      * This can happen if the app was killed while a download was in progress
      */
-    private suspend fun cleanupStaleDownloads() {
-        try {
-            // Get all downloads in potentially stale states
-            val allDownloads = apkRepository.getAllDownloads()
+    private fun cleanupStaleDownloads() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Get all downloads in potentially stale states
+                val allDownloads = apkRepository.getAllDownloads()
 
-            allDownloads.forEach { download ->
-                when (download.status) {
-                    DownloadStatus.QUEUED,
-                    DownloadStatus.DOWNLOADING,
-                    DownloadStatus.DOWNLOADED,
-                    DownloadStatus.VERIFYING -> {
-                        // Check if there's an active worker for this download
-                        val workInfo =
-                            workManager.getWorkInfosForUniqueWork("download_${download.packageName}")
-                                .get()
+                allDownloads.forEach { download ->
+                    when (download.status) {
+                        DownloadStatus.QUEUED,
+                        DownloadStatus.DOWNLOADING,
+                        DownloadStatus.DOWNLOADED,
+                        DownloadStatus.VERIFYING -> {
+                            // Check if download has no URL and is QUEUED - this means it's waiting for RequestDownloadUrlWorker
+                            if (download.url == null && download.status == DownloadStatus.QUEUED) {
+                                // Check if there's an active RequestDownloadUrlWorker
+                                val requestWorkInfo =
+                                    workManager.getWorkInfosByTag("request_${download.packageName}")
+                                        .get()
+                                val hasActiveRequestWorker = requestWorkInfo.any { info ->
+                                    info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
+                                }
 
-                        // If no active worker or worker is in terminal state, clean up
-                        val hasActiveWorker = workInfo.any { info ->
-                            info.state == WorkInfo.State.RUNNING ||
-                                    info.state == WorkInfo.State.ENQUEUED
+                                if (!hasActiveRequestWorker) {
+                                    // No active request worker and no URL - this is a stale/failed request
+                                    Log.w(
+                                        "StoreLendingViewModel",
+                                        "Download for ${download.packageName} has no URL and no active request worker - cleaning up"
+                                    )
+                                    apkRepository.deleteDownload(download.packageName)
+                                }
+                                // Otherwise, continue - worker is active
+                            } else {
+                                // Check if there's an active download worker using tag
+                                val downloadWorkInfo =
+                                    workManager.getWorkInfosByTag("download_${download.packageName}")
+                                        .get()
+                                val hasActiveDownloadWorker = downloadWorkInfo.any { info ->
+                                    info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
+                                }
+
+                                if (!hasActiveDownloadWorker) {
+                                    Log.i(
+                                        "StoreLendingViewModel",
+                                        "Cleaning up stale download for ${download.packageName} with status ${download.status}"
+                                    )
+                                    apkRepository.deleteDownload(download.packageName)
+                                }
+                            }
                         }
 
-                        if (!hasActiveWorker) {
-                            Log.i(
-                                "StoreLendingViewModel",
-                                "Cleaning up stale download for ${download.packageName} with status ${download.status}"
-                            )
+                        DownloadStatus.FAILED,
+                        DownloadStatus.CANCELLED -> {
+                            // These should already be cleaned up, but do it anyway
                             apkRepository.deleteDownload(download.packageName)
                         }
-                    }
 
-                    DownloadStatus.FAILED,
-                    DownloadStatus.CANCELLED -> {
-                        // These should already be cleaned up, but do it anyway
-                        apkRepository.deleteDownload(download.packageName)
-                    }
-
-                    else -> {
-                        // INSTALLING status is ok - it's waiting for user confirmation
+                        else -> {
+                            // INSTALLING status is ok - it's waiting for user confirmation
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                Log.e("StoreLendingViewModel", "Failed to clean up stale downloads", e)
             }
-        } catch (e: Exception) {
-            Log.e("StoreLendingViewModel", "Failed to clean up stale downloads", e)
         }
     }
 

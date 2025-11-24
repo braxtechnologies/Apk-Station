@@ -22,6 +22,7 @@ import com.brax.apkstation.presentation.ui.navigation.CategoryAppsScreen
 import com.brax.apkstation.utils.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -482,7 +483,7 @@ class CategoryAppsViewModel @Inject constructor(
      * This can happen if the app was killed while a download was in progress
      */
     private fun cleanupStaleDownloads() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 // Get all downloads in potentially stale states
                 val allDownloads = apkRepository.getAllDownloads()
@@ -493,23 +494,39 @@ class CategoryAppsViewModel @Inject constructor(
                         DownloadStatus.DOWNLOADING,
                         DownloadStatus.DOWNLOADED,
                         DownloadStatus.VERIFYING -> {
-                            // Check if there's an active worker for this download
-                            val workInfo = workManager.getWorkInfosForUniqueWork("download_${download.packageName}").get()
-
-                            // If no active worker or worker is in terminal state, clean up
-                            val hasActiveWorker = workInfo.any { info ->
-                                info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
-                            }
-
-                            if (!hasActiveWorker) {
-                                Log.i(
-                                    "CategoryAppsViewModel",
-                                    "Cleaning up stale download for ${download.packageName} with status ${download.status}"
-                                )
-                                apkRepository.deleteDownload(download.packageName)
+                            // Check if download has no URL and is QUEUED - this means it's waiting for RequestDownloadUrlWorker
+                            if (download.url == null && download.status == DownloadStatus.QUEUED) {
+                                // Check if there's an active RequestDownloadUrlWorker
+                                val requestWorkInfo = workManager.getWorkInfosByTag("request_${download.packageName}").get()
+                                val hasActiveRequestWorker = requestWorkInfo.any { info ->
+                                    info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
+                                }
+                                
+                                if (!hasActiveRequestWorker) {
+                                    // No active request worker and no URL - this is a stale/failed request
+                                    Log.w("CategoryAppsViewModel", "Download for ${download.packageName} has no URL and no active request worker - cleaning up")
+                                    apkRepository.deleteDownload(download.packageName)
+                                } else {
+                                    // There's an active request worker, resume monitoring
+                                    monitorDownloadProgress(download.packageName)
+                                }
                             } else {
-                                // There's an active worker, resume monitoring
-                                monitorDownloadProgress(download.packageName)
+                                // Check if there's an active download worker using tag
+                                val downloadWorkInfo = workManager.getWorkInfosByTag("download_${download.packageName}").get()
+                                val hasActiveDownloadWorker = downloadWorkInfo.any { info ->
+                                    info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
+                                }
+
+                                if (!hasActiveDownloadWorker) {
+                                    Log.i(
+                                        "CategoryAppsViewModel",
+                                        "Cleaning up stale download for ${download.packageName} with status ${download.status}"
+                                    )
+                                    apkRepository.deleteDownload(download.packageName)
+                                } else {
+                                    // There's an active worker, resume monitoring
+                                    monitorDownloadProgress(download.packageName)
+                                }
                             }
                         }
 
