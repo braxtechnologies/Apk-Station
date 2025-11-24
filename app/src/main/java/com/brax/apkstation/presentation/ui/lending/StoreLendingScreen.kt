@@ -52,6 +52,9 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.brax.apkstation.R
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
@@ -74,6 +77,7 @@ fun StoreLendingScreen(
     val context = LocalContext.current
     val uiState by viewModel.lendingUiState.collectAsStateWithLifecycle()
     val favoritesEnabled by viewModel.favoritesEnabled.collectAsStateWithLifecycle()
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     val snackbarHostState = remember { SnackbarHostState() }
     val focusRequester = remember { FocusRequester() }
@@ -84,6 +88,19 @@ fun StoreLendingScreen(
         if (uiState.isSearchMode) {
             focusRequester.requestFocus()
             keyboardController?.show()
+        }
+    }
+
+    // Observe lifecycle to refresh status when returning from app info
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.retrieveAvailableAppsList(sort = uiState.selectedSection ?: SectionTab.BRAX_PICKS.queryName)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
         }
     }
 
@@ -291,7 +308,7 @@ fun StoreLendingScreen(
                         if (!uiState.isConnected) {
                             viewModel.showNetworkError()
                         } else {
-                            viewModel.retrieveAvailableAppsList(isRefresh = true)
+                            viewModel.retrieveAvailableAppsList(sort = uiState.selectedSection ?: SectionTab.BRAX_PICKS.queryName, isRefresh = true)
                         }
                     },
                     modifier = Modifier.fillMaxSize(),

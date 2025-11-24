@@ -129,14 +129,22 @@ class StoreLendingViewModel @Inject constructor(
                 val cachedApps = sectionCache.get(sort)
                 if (cachedApps != null) {
                     Log.d("StoreLendingViewModel", "Using cached apps for section: $sort")
+                    
+                    // Refresh status from database and PackageManager to catch any changes
+                    // (e.g., downloads started from app info screen, installations, uninstalls)
+                    val validatedApps = cachedApps.map { app ->
+                        // Get fresh status with full logic (downloads, installs, updates, etc.)
+                        app.copy(status = getAppStatus(app.packageName, app.hasUpdate))
+                    }
+                    
                     _lendingUiState.update {
                         it.copy(
-                            apps = cachedApps,
+                            apps = validatedApps,
                             isLoading = false,
                             isRefreshing = false
                         )
                     }
-                    allApps = cachedApps
+                    allApps = validatedApps
                     return@launch
                 }
             }

@@ -20,6 +20,7 @@ import java.io.IOException
 import java.util.zip.ZipEntry
 import javax.inject.Inject
 import javax.inject.Singleton
+import androidx.core.net.toUri
 
 /**
  * Installer using Android's PackageInstaller API
@@ -470,7 +471,7 @@ class SessionInstaller @Inject constructor(
     
     override fun uninstall(packageName: String) {
         val intent = Intent(Intent.ACTION_DELETE).apply {
-            data = Uri.parse("package:$packageName")
+            data = "package:$packageName".toUri()
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         context.startActivity(intent)
