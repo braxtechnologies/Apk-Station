@@ -689,6 +689,13 @@ class ApkRepository @Inject constructor(
     }
     
     /**
+     * Observe all downloads from database as Flow
+     */
+    fun observeAllDownloads(): Flow<List<com.brax.apkstation.data.room.entity.Download>> {
+        return storeDao.getAllDownloads()
+    }
+    
+    /**
      * Get all apps that have updates available (optimized for landing page)
      */
     suspend fun getAppsWithUpdates(): List<DBApplication> {

@@ -86,6 +86,9 @@ class StoreLendingViewModel @Inject constructor(
     init {
         // Clean up stale downloads on initialization
         cleanupStaleDownloads()
+        
+        // Observe downloads to sync cache when download statuses change
+        observeDownloadChanges()
     }
 
     fun onAppActionButtonClick(app: AppItem) {
@@ -130,22 +133,14 @@ class StoreLendingViewModel @Inject constructor(
                 val cachedApps = sectionCache.get(sort)
                 if (cachedApps != null) {
                     Log.d("StoreLendingViewModel", "Using cached apps for section: $sort")
-                    
-                    // Refresh status from database and PackageManager to catch any changes
-                    // (e.g., downloads started from app info screen, installations, uninstalls)
-                    val validatedApps = cachedApps.map { app ->
-                        // Get fresh status with full logic (downloads, installs, updates, etc.)
-                        app.copy(status = getAppStatus(app.packageName, app.hasUpdate))
-                    }
-                    
                     _lendingUiState.update {
                         it.copy(
-                            apps = validatedApps,
+                            apps = cachedApps,
                             isLoading = false,
                             isRefreshing = false
                         )
                     }
-                    allApps = validatedApps
+                    allApps = cachedApps
                     return@launch
                 }
             }
@@ -1194,7 +1189,7 @@ class StoreLendingViewModel @Inject constructor(
     }
 
     /**
-     * Helper function to update a specific app's status in the UI
+     * Helper function to update a specific app's status in the UI and cache
      */
     private fun updateAppStatus(
         packageName: String,
@@ -1226,6 +1221,9 @@ class StoreLendingViewModel @Inject constructor(
                 app
             }
         }
+        
+        // Update the cache so it stays in sync
+        sectionCache.updateAppStatus(packageName, newStatus, hasUpdate)
     }
 
     /**
@@ -1394,6 +1392,33 @@ class StoreLendingViewModel @Inject constructor(
     }
 
     /**
+     * Observe download changes to sync cache when downloads are started from other screens
+     */
+    private fun observeDownloadChanges() {
+        viewModelScope.launch {
+            apkRepository.observeAllDownloads()
+                .collect { downloads ->
+                    // Update cache with current download statuses
+                    downloads.forEach { download ->
+                        val status = when (download.status) {
+                            DownloadStatus.QUEUED,
+                            DownloadStatus.DOWNLOADING,
+                            DownloadStatus.DOWNLOADED,
+                            DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
+                            DownloadStatus.INSTALLING -> AppStatus.INSTALLING
+                            else -> null
+                        }
+                        
+                        status?.let {
+                            // Update cache only (UI will be updated by monitoring)
+                            sectionCache.updateAppStatus(download.packageName, it)
+                        }
+                    }
+                }
+        }
+    }
+    
+    /**
      * Clean up stale downloads that might be stuck in QUEUED/DOWNLOADING/VERIFYING state
      * This can happen if the app was killed while a download was in progress
      */
@@ -1426,8 +1451,10 @@ class StoreLendingViewModel @Inject constructor(
                                         "Download for ${download.packageName} has no URL and no active request worker - cleaning up"
                                     )
                                     apkRepository.deleteDownload(download.packageName)
+                                } else {
+                                    // There's an active request worker, resume monitoring
+                                    monitorDownloadProgress(download.packageName)
                                 }
-                                // Otherwise, continue - worker is active
                             } else {
                                 // Check if there's an active download worker using tag
                                 val downloadWorkInfo =
@@ -1443,6 +1470,9 @@ class StoreLendingViewModel @Inject constructor(
                                         "Cleaning up stale download for ${download.packageName} with status ${download.status}"
                                     )
                                     apkRepository.deleteDownload(download.packageName)
+                                } else {
+                                    // There's an active worker, resume monitoring
+                                    monitorDownloadProgress(download.packageName)
                                 }
                             }
                         }
@@ -1630,10 +1660,10 @@ private class SearchCache(
 /**
  * Cache for section data (BRAX Picks, Top Charts, New Releases)
  * Network-aware: only serves cached data when connected
- * Expires after 10 minutes
+ * Expires after 5 minutes
  */
 private class SectionCache(
-    private val expirationTimeMillis: Long = 10 * 60 * 1000 // 10 minutes
+    private val expirationTimeMillis: Long = 5 * 60 * 1000 // 5 minutes
 ) {
     private data class SectionCacheEntry(
         val apps: List<AppItem>,
@@ -1684,6 +1714,26 @@ private class SectionCache(
      */
     fun clearSection(sectionKey: String) {
         cache.remove(sectionKey)
+    }
+    
+    /**
+     * Update a specific app's status in all cached sections
+     */
+    fun updateAppStatus(packageName: String, newStatus: AppStatus, hasUpdate: Boolean? = null) {
+        cache.forEach { (sectionKey, entry) ->
+            val updatedApps = entry.apps.map { app ->
+                if (app.packageName == packageName) {
+                    if (hasUpdate != null) {
+                        app.copy(status = newStatus, hasUpdate = hasUpdate)
+                    } else {
+                        app.copy(status = newStatus)
+                    }
+                } else {
+                    app
+                }
+            }
+            cache[sectionKey] = entry.copy(apps = updatedApps)
+        }
     }
 }
 
