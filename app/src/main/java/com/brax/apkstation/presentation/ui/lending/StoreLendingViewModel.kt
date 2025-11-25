@@ -9,6 +9,9 @@ import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.brax.apkstation.BuildConfig
+import com.brax.apkstation.app.android.StoreApplication
+import com.brax.apkstation.data.event.InstallerEvent
+import com.brax.apkstation.data.helper.DownloadHelper
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
@@ -31,7 +34,7 @@ import javax.inject.Inject
 @HiltViewModel
 class StoreLendingViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
-    private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
+    private val downloadHelper: DownloadHelper,
     private val appPreferencesRepository: AppPreferencesRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -74,31 +77,61 @@ class StoreLendingViewModel @Inject constructor(
     private var searchJob: Job? = null
 
     init {
-        // Observe installation events from the event system
+        // Observe installer events for immediate UI feedback
         observeInstallationEvents()
 
         // Observe download state changes
         observeDownloadState()
+        
+        // Observe database changes (Room notifies when AppStatusHelper updates)
+        observeDatabaseChanges()
     }
     
     /**
-     * Observe installation events from EventFlow
+     * Observe installer events for immediate UI feedback and error messages
+     * - Installing: Show immediate feedback
+     * - Failed: Show error message
      */
     private fun observeInstallationEvents() {
         viewModelScope.launch {
-            com.brax.apkstation.app.android.StoreApplication.events.installerEvent.collect { event ->
+            StoreApplication.events.installerEvent.collect { event ->
                 when (event) {
-                    is com.brax.apkstation.data.event.InstallerEvent.Installed -> {
-                        handleAppInstalled(event.packageName)
-                    }
-                    is com.brax.apkstation.data.event.InstallerEvent.Failed -> {
-                        handleInstallFailed(event.packageName, event.error)
-                    }
-                    is com.brax.apkstation.data.event.InstallerEvent.Installing -> {
+                    is InstallerEvent.Installing -> {
+                        // Show immediate feedback for installing state
                         updateAppStatus(event.packageName, AppStatus.INSTALLING)
                     }
-                    is com.brax.apkstation.data.event.InstallerEvent.Uninstalled -> {
-                        handleAppUninstalled(event.packageName)
+                    is InstallerEvent.Failed -> {
+                        // Show error message and refresh status
+                        handleInstallFailed(event.packageName, event.error)
+                    }
+                    // Installed/Uninstalled handled by database observation
+                    else -> {}
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe database changes for app installations/uninstallations
+     * Room automatically notifies this Flow when AppStatusHelper updates the DB
+     */
+    private fun observeDatabaseChanges() {
+        viewModelScope.launch {
+            apkRepository.getAllApplications().collect { dbApps ->
+                val dbPackageNames = dbApps.map { it.packageName }.toSet()
+                
+                // Update status for all apps in our lists
+                _lendingUiState.value.apps.forEach { displayedApp ->
+                    val dbApp = dbApps.find { it.packageName == displayedApp.packageName }
+                    
+                    if (dbApp != null) {
+                        // App is in database - use DB status
+                        updateAppStatus(dbApp.packageName, dbApp.status, dbApp.hasUpdate)
+                    } else {
+                        // App was removed from database (uninstalled non-favorite)
+                        // Check actual installation status from PackageManager
+                        val status = getAppStatus(displayedApp.packageName, false)
+                        updateAppStatus(displayedApp.packageName, status, false)
                     }
                 }
             }
@@ -113,10 +146,10 @@ class StoreLendingViewModel @Inject constructor(
             downloadHelper.downloadsList.collect { downloads ->
                 downloads.forEach { download ->
                     val status = when (download.status) {
-                        com.brax.apkstation.data.model.DownloadStatus.QUEUED,
-                        com.brax.apkstation.data.model.DownloadStatus.DOWNLOADING,
-                        com.brax.apkstation.data.model.DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
-                        com.brax.apkstation.data.model.DownloadStatus.INSTALLING -> AppStatus.INSTALLING
+                        DownloadStatus.QUEUED,
+                        DownloadStatus.DOWNLOADING,
+                        DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
+                        DownloadStatus.INSTALLING -> AppStatus.INSTALLING
                         else -> null
                     }
                     
@@ -127,30 +160,13 @@ class StoreLendingViewModel @Inject constructor(
     }
     
     /**
-     * Handle app installed event
-     */
-    private suspend fun handleAppInstalled(packageName: String) {
-        // Check if update is available
-        val dbApp = apkRepository.getAppByPackageName(packageName)
-        val hasUpdate = dbApp?.hasUpdate ?: false
-        val finalStatus = if (hasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
-        
-        updateAppStatus(packageName, finalStatus, hasUpdate)
-    }
-    
-    /**
      * Handle installation failure
+     * Just refresh UI state and show error
      */
-    private fun handleInstallFailed(packageName: String, error: String?) {
-        updateAppStatus(packageName, AppStatus.NOT_INSTALLED)
+    private suspend fun handleInstallFailed(packageName: String, error: String?) {
+        val status = getAppStatus(packageName)
+        updateAppStatus(packageName, status)
         _lendingUiState.update { it.copy(errorMessage = error ?: "Installation failed") }
-    }
-    
-    /**
-     * Handle app uninstalled
-     */
-    private fun handleAppUninstalled(packageName: String) {
-        updateAppStatus(packageName, AppStatus.NOT_INSTALLED)
     }
 
     fun onAppActionButtonClick(app: AppItem) {

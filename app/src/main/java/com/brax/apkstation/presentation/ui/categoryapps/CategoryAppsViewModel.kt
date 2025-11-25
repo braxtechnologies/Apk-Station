@@ -62,32 +62,65 @@ class CategoryAppsViewModel @Inject constructor(
     init {
         loadCategoryApps()
         
-        // Observe installation events
+        // Observe installation events for immediate feedback
         observeInstallationEvents()
         
         // Observe download state
         observeDownloadState()
+        
+        // Observe database changes
+        observeDatabaseChanges()
     }
     
     /**
-     * Observe installation events from EventFlow
+     * Observe installer events for immediate UI feedback and errors
      */
     private fun observeInstallationEvents() {
         viewModelScope.launch {
             com.brax.apkstation.app.android.StoreApplication.events.installerEvent.collect { event ->
                 when (event) {
-                    is com.brax.apkstation.data.event.InstallerEvent.Installed -> {
-                        handleAppInstalled(event.packageName)
-                    }
-                    is com.brax.apkstation.data.event.InstallerEvent.Failed -> {
-                        updateAppStatus(event.packageName, AppStatus.NOT_INSTALLED)
-                        _uiState.update { it.copy(errorMessage = event.error) }
-                    }
                     is com.brax.apkstation.data.event.InstallerEvent.Installing -> {
                         updateAppStatus(event.packageName, AppStatus.INSTALLING)
                     }
-                    is com.brax.apkstation.data.event.InstallerEvent.Uninstalled -> {
-                        updateAppStatus(event.packageName, AppStatus.NOT_INSTALLED)
+                    is com.brax.apkstation.data.event.InstallerEvent.Failed -> {
+                        // Refresh status from PackageManager/DB and show error
+                        val dbApp = apkRepository.getAppByPackageName(event.packageName)
+                        val status = if (dbApp != null) dbApp.status else AppStatus.NOT_INSTALLED
+                        updateAppStatus(event.packageName, status)
+                        _uiState.update { it.copy(errorMessage = event.error) }
+                    }
+                    // Installed/Uninstalled handled by database observation
+                    else -> {}
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe database changes for app installations/uninstallations
+     * Room automatically notifies this Flow when AppStatusHelper updates the DB
+     */
+    private fun observeDatabaseChanges() {
+        viewModelScope.launch {
+            apkRepository.getAllApplications().collect { dbApps ->
+                // Update status for all apps in our list
+                _uiState.value.apps.forEach { displayedApp ->
+                    val dbApp = dbApps.find { it.packageName == displayedApp.packageName }
+                    
+                    if (dbApp != null) {
+                        // App is in database - use DB status
+                        updateAppStatus(dbApp.packageName, dbApp.status, dbApp.hasUpdate)
+                    } else {
+                        // App was removed from database (uninstalled non-favorite)
+                        // Check actual installation status from PackageManager
+                        val isInstalled = try {
+                            context.packageManager.getPackageInfo(displayedApp.packageName, 0)
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
+                        val status = if (isInstalled) AppStatus.INSTALLED else AppStatus.NOT_INSTALLED
+                        updateAppStatus(displayedApp.packageName, status, false)
                     }
                 }
             }
@@ -113,18 +146,6 @@ class CategoryAppsViewModel @Inject constructor(
                 }
             }
         }
-    }
-    
-    /**
-     * Handle app installed event
-     */
-    private suspend fun handleAppInstalled(packageName: String) {
-        // Check if update is available
-        val dbApp = apkRepository.getAppByPackageName(packageName)
-        val hasUpdate = dbApp?.hasUpdate ?: false
-        val finalStatus = if (hasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
-        
-        updateAppStatus(packageName, finalStatus, hasUpdate)
     }
 
     fun loadCategoryApps(isRefresh: Boolean = false) {

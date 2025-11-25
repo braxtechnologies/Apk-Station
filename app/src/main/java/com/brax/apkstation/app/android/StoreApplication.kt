@@ -1,15 +1,20 @@
 package com.brax.apkstation.app.android
 
 import android.app.Application
+import android.content.Intent
+import android.content.IntentFilter
 import android.util.Log
 import android.util.Log.DEBUG
 import android.util.Log.INFO
+import androidx.core.content.ContextCompat
 import androidx.hilt.work.HiltWorkerFactory
 import androidx.work.Configuration
 import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.data.event.EventFlow
+import com.brax.apkstation.data.helper.AppStatusHelper
 import com.brax.apkstation.data.helper.DownloadHelper
 import com.brax.apkstation.data.helper.UpdateHelper
+import com.brax.apkstation.data.receiver.PackageManagerReceiver
 import com.brax.apkstation.utils.CommonUtils
 import com.brax.apkstation.utils.CommonUtils.TAG
 import com.brax.apkstation.utils.NotificationHelper
@@ -36,6 +41,9 @@ class StoreApplication : Application(), Configuration.Provider {
     
     @Inject
     lateinit var updateHelper: UpdateHelper
+    
+    @Inject
+    lateinit var appStatusHelper: AppStatusHelper
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -79,9 +87,30 @@ class StoreApplication : Application(), Configuration.Provider {
         
         // Schedule periodic update checks
         updateHelper.scheduleAutomatedCheck()
+        
+        // Initialize app status helper to sync DB with installations/uninstallations
+        appStatusHelper.init()
+
+        //Register broadcast receiver for package install/uninstall
+        ContextCompat.registerReceiver(
+            this,
+            object : PackageManagerReceiver() {},
+            getFilter(),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         CommonUtils.cleanupInstallationSessions(applicationContext)
 
         Log.i(TAG, "ApkStation initialized with event system and download management")
+    }
+
+    private fun getFilter(): IntentFilter {
+        val filter = IntentFilter()
+        filter.addDataScheme("package")
+        @Suppress("DEPRECATION")
+        filter.addAction(Intent.ACTION_PACKAGE_INSTALL)
+        filter.addAction(Intent.ACTION_PACKAGE_ADDED)
+        filter.addAction(Intent.ACTION_PACKAGE_REMOVED)
+        return filter
     }
 }

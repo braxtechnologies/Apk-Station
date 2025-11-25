@@ -9,6 +9,7 @@ import androidx.room.Update
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.room.entity.DBApplication
 import com.brax.apkstation.data.room.entity.Download
+import com.brax.apkstation.presentation.ui.lending.AppStatus
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -99,7 +100,7 @@ interface StoreDao {
     suspend fun clearAllUpdateFlags()
     
     @Query("SELECT * FROM application WHERE status = :status")
-    suspend fun getApplicationsByStatus(status: com.brax.apkstation.presentation.ui.lending.AppStatus): List<DBApplication>
+    suspend fun getApplicationsByStatus(status: AppStatus): List<DBApplication>
     
     // Favorites queries
     @Query("SELECT * FROM application WHERE isFavorite = 1 ORDER BY name ASC")
@@ -110,5 +111,16 @@ interface StoreDao {
     
     @Query("UPDATE application SET isFavorite = :isFavorite WHERE packageName = :packageName")
     suspend fun updateFavoriteStatus(packageName: String, isFavorite: Boolean)
+    
+    @Query("UPDATE application SET status = :status WHERE packageName = :packageName")
+    suspend fun updateApplicationStatus(packageName: String, status: AppStatus)
+    
+    @Query("UPDATE application SET status = :status, latestVersionCode = :latestVersionCode, hasUpdate = :hasUpdate WHERE packageName = :packageName")
+    suspend fun updateApplicationInstallStatus(
+        packageName: String, 
+        status: AppStatus, 
+        latestVersionCode: Int, 
+        hasUpdate: Boolean
+    )
 
 }

@@ -63,15 +63,18 @@ class AppInfoViewModel @Inject constructor(
     private var cachedApkDetails: ApkDetailsDto? = null
     
     init {
-        // Observe installation events
+        // Observe installation events for immediate feedback
         observeInstallationEvents()
         
         // Observe download state
         observeDownloadState()
+        
+        // Observe database changes
+        observeDatabaseChanges()
     }
     
     /**
-     * Observe installation events from EventFlow
+     * Observe installation events for immediate UI feedback and errors
      */
     private fun observeInstallationEvents() {
         viewModelScope.launch {
@@ -80,18 +83,66 @@ class AppInfoViewModel @Inject constructor(
                 
                 if (event.packageName == currentPackageName) {
                     when (event) {
-                        is com.brax.apkstation.data.event.InstallerEvent.Installed -> {
-                            handleInstallationComplete(event.packageName)
+                        is com.brax.apkstation.data.event.InstallerEvent.Installing -> {
+                            updateAppStatus(AppStatus.INSTALLING)
                         }
                         is com.brax.apkstation.data.event.InstallerEvent.Failed -> {
                             handleInstallationFailed(event.packageName, event.error)
                         }
-                        is com.brax.apkstation.data.event.InstallerEvent.Installing -> {
-                            updateAppStatus(AppStatus.INSTALLING)
-                        }
-                        is com.brax.apkstation.data.event.InstallerEvent.Uninstalled -> {
-                            updateAppStatus(AppStatus.NOT_INSTALLED)
-                        }
+                        // Installed/Uninstalled handled by database observation
+                        else -> {}
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe database changes for this app
+     * Room automatically notifies when AppStatusHelper updates the DB
+     */
+    private fun observeDatabaseChanges() {
+        viewModelScope.launch {
+            apkRepository.getAllApplications().collect { dbApps ->
+                val currentPackageName = _uiState.value.appDetails?.packageName ?: return@collect
+                val dbApp = dbApps.find { it.packageName == currentPackageName }
+                
+                // Get current installation info
+                val installedVersionInfo = getInstalledVersionInfo(currentPackageName)
+                
+                if (dbApp != null) {
+                    // App in database - use DB status and hasUpdate
+                    val status = getActualAppStatus(currentPackageName, dbApp.hasUpdate)
+                    
+                    _uiState.update { state ->
+                        state.appDetails?.let { app ->
+                            state.copy(
+                                appDetails = app.copy(
+                                    status = status,
+                                    installedVersion = installedVersionInfo?.first,
+                                    installedVersionCode = installedVersionInfo?.second,
+                                    hasUpdate = dbApp.hasUpdate,
+                                    latestVersionCode = dbApp.latestVersionCode
+                                )
+                            )
+                        } ?: state
+                    }
+                } else {
+                    // App was removed from database (uninstalled non-favorite)
+                    // Check actual status from PackageManager
+                    val status = getActualAppStatus(currentPackageName, false)
+                    
+                    _uiState.update { state ->
+                        state.appDetails?.let { app ->
+                            state.copy(
+                                appDetails = app.copy(
+                                    status = status,
+                                    installedVersion = installedVersionInfo?.first,
+                                    installedVersionCode = installedVersionInfo?.second,
+                                    hasUpdate = false
+                                )
+                            )
+                        } ?: state
                     }
                 }
             }
@@ -468,6 +519,7 @@ class AppInfoViewModel @Inject constructor(
 
     /**
      * Handle installation complete event from EventFlow
+     * Just refresh UI - AppStatusHelper already updated the database
      */
     fun handleInstallationComplete(packageName: String) {
         viewModelScope.launch {
@@ -476,41 +528,23 @@ class AppInfoViewModel @Inject constructor(
             // Remember if this was an update
             val wasUpdate = app.hasUpdate || app.status == AppStatus.UPDATING
 
-            // Give PackageManager a moment to update
-            delay(300)
+            // Refresh app details from database (AppStatusHelper has updated it)
+            val updatedApp = apkRepository.getAppByPackageName(packageName)
 
             // Get the newly installed version
             val installedVersionInfo = getInstalledVersionInfo(packageName)
-            val installedVersionCode = installedVersionInfo?.second
-            val latestVersionCode = app.versionCode
-
-            // Calculate if we still have an update available
-            val stillHasUpdate = if (installedVersionCode != null && latestVersionCode != null) {
-                installedVersionCode < latestVersionCode
-            } else {
-                false
-            }
-
-            // Update database with new version info
-            if (latestVersionCode != null) {
-                apkRepository.updateVersionInfo(
-                    packageName = packageName,
-                    latestVersionCode = latestVersionCode,
-                    hasUpdate = stillHasUpdate
-                )
-            }
-
-            val finalStatus =
-                if (stillHasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
+            
+            // Calculate actual status
+            val finalStatus = getActualAppStatus(packageName, updatedApp?.hasUpdate ?: false)
 
             _uiState.update { state ->
                 state.copy(
                     appDetails = app.copy(
                         status = finalStatus,
                         installedVersion = installedVersionInfo?.first,
-                        installedVersionCode = installedVersionCode,
-                        hasUpdate = stillHasUpdate,
-                        latestVersionCode = latestVersionCode
+                        installedVersionCode = installedVersionInfo?.second,
+                        hasUpdate = updatedApp?.hasUpdate ?: false,
+                        latestVersionCode = updatedApp?.latestVersionCode ?: app.versionCode
                     ),
                     errorMessage = if (wasUpdate) "Updated successfully!" else "Installation complete!"
                 )
@@ -520,6 +554,7 @@ class AppInfoViewModel @Inject constructor(
 
     /**
      * Handle installation failure from EventFlow
+     * Just refresh UI state, no database updates needed
      */
     fun handleInstallationFailed(packageName: String, errorMessage: String?) {
         viewModelScope.launch {
@@ -529,40 +564,19 @@ class AppInfoViewModel @Inject constructor(
             val installedVersionInfo = getInstalledVersionInfo(packageName)
             val isStillInstalled = installedVersionInfo != null
 
-            if (isStillInstalled) {
-                // App is still installed - it was an update attempt that failed
-                val latestVersionCode = app.versionCode
-                val installedVersionCode = installedVersionInfo?.second
-                val stillHasUpdate =
-                    if (installedVersionCode != null && latestVersionCode != null) {
-                        installedVersionCode < latestVersionCode
-                    } else {
-                        false
-                    }
-
-                // Update database with hasUpdate flag
-                if (latestVersionCode != null) {
-                    apkRepository.updateVersionInfo(packageName, latestVersionCode, stillHasUpdate)
-                }
-
-                val finalStatus =
-                    if (stillHasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
+            // Refresh app details from database
+            val updatedApp = apkRepository.getAppByPackageName(packageName)
+            val finalStatus = getActualAppStatus(packageName, updatedApp?.hasUpdate ?: false)
+            
                 _uiState.update { state ->
                     state.copy(
                         appDetails = app.copy(
                             status = finalStatus,
                             installedVersion = installedVersionInfo?.first,
-                            installedVersionCode = installedVersionCode,
-                            hasUpdate = stillHasUpdate,
-                            latestVersionCode = latestVersionCode
-                        )
+                        installedVersionCode = installedVersionInfo?.second,
+                        hasUpdate = updatedApp?.hasUpdate ?: false
                     )
-                }
-            } else {
-                // App is not installed - fresh install attempt failed
-                _uiState.update { state ->
-                    state.copy(appDetails = app.copy(status = AppStatus.NOT_INSTALLED))
-                }
+                )
             }
 
             // Show error message if provided

@@ -738,6 +738,14 @@ class ApkRepository @Inject constructor(
         storeDao.updateApplicationVersionInfo(packageName, latestVersionCode, hasUpdate)
     }
     
+    /**
+     * Get all applications from database as Flow
+     * Automatically emits when AppStatusHelper or other components update the database
+     */
+    fun getAllApplications(): Flow<List<DBApplication>> {
+        return storeDao.getAllApplications()
+    }
+    
     // ========== Favorites Operations ==========
     
     /**
