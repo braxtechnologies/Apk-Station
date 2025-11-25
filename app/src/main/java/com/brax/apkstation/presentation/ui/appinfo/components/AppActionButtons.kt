@@ -59,7 +59,7 @@ fun AppActionButtons(
             containerColor = MaterialTheme.colorScheme.primary
         )
 
-        AppStatus.DOWNLOADING, AppStatus.INSTALLING, AppStatus.UNINSTALLING, AppStatus.REQUESTING -> ButtonDefaults.buttonColors(
+        AppStatus.DOWNLOADING, AppStatus.INSTALLING, AppStatus.UNINSTALLING -> ButtonDefaults.buttonColors(
             containerColor = MaterialTheme.colorScheme.tertiary
         )
 
@@ -71,12 +71,6 @@ fun AppActionButtons(
             containerColor = Color(0xFFFF9800), // Orange like update button
             disabledContainerColor = Color(0xFFFF9800).copy(alpha = 0.6f), // Dimmed orange
             disabledContentColor = Color.White.copy(alpha = 0.7f) // Slightly dimmed white
-        )
-
-        AppStatus.REQUESTED -> ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-            disabledContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-            disabledContentColor = MaterialTheme.colorScheme.onPrimary
         )
 
         AppStatus.UNAVAILABLE -> ButtonDefaults.buttonColors(
@@ -140,28 +134,6 @@ fun AppActionButtons(
             leadingButtonText = R.string.uninstalling,
             leadingButtonColors = leadingButtonColors,
             hasCircularProgressIndicator = true
-        )
-
-        AppStatus.REQUESTING -> HybridAppActionButtons(
-            leadingButtonText = R.string.requesting,
-            leadingButtonColors = leadingButtonColors,
-        )
-
-        AppStatus.REQUESTED -> HybridAppActionButtons(
-            leadingButtonText = R.string.button_requested,
-            leadingButtonColors = leadingButtonColors,
-            contentDescription = "Info about requested status",
-            dialogData = Pair(
-                context.getString(R.string.app_requested),
-                context.getString(R.string.info_dialog_app_restricted_message)
-            ),
-            iconButtonColors = iconButtonColors(
-                containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f),
-                contentColor = MaterialTheme.colorScheme.onPrimary
-            ),
-            isRow = true,
-            isSecondButtonIcon = true,
-            infoDialogState = infoDialogState
         )
 
         AppStatus.UNAVAILABLE -> HybridAppActionButtons(

@@ -597,14 +597,6 @@ class ApkRepository @Inject constructor(
     }
     
     /**
-     * Get all apps in REQUESTED state
-     * Used by RequestedAppsCheckWorker to retry downloading requested apps
-     */
-    suspend fun getRequestedApps(): List<DBApplication> {
-        return storeDao.getApplicationsByStatus(AppStatus.REQUESTED)
-    }
-    
-    /**
      * Increment retry count for a requested app
      * Returns the new retry count
      */

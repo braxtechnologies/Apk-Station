@@ -92,6 +92,12 @@ interface StoreDao {
     @Query("SELECT * FROM application WHERE hasUpdate = 1")
     suspend fun getApplicationsWithUpdatesNoFlow(): List<DBApplication>
     
+    @Query("UPDATE application SET hasUpdate = :hasUpdate WHERE packageName = :packageName")
+    suspend fun updateApplicationHasUpdate(packageName: String, hasUpdate: Boolean)
+    
+    @Query("UPDATE application SET hasUpdate = 0")
+    suspend fun clearAllUpdateFlags()
+    
     @Query("SELECT * FROM application WHERE status = :status")
     suspend fun getApplicationsByStatus(status: com.brax.apkstation.presentation.ui.lending.AppStatus): List<DBApplication>
     

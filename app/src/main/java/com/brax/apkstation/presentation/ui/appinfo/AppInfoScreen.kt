@@ -127,7 +127,7 @@ fun AppInfoScreen(
                         if (packageName != null) {
                             if (success) {
                                 Log.i("AppInfoScreen", "Calling handleInstallationComplete for $packageName with sessionId: $downloadSessionId")
-                                viewModel.handleInstallationComplete(packageName, downloadSessionId)
+                                viewModel.handleInstallationComplete(packageName)
                             } else {
                                 Log.i("AppInfoScreen", "Calling handleInstallationFailed for $packageName: $errorMessage")
                                 viewModel.handleInstallationFailed(packageName, errorMessage)

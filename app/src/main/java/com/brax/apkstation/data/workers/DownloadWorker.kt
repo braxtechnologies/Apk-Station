@@ -12,9 +12,10 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
-import com.brax.apkstation.data.installer.AppInstaller
+import com.brax.apkstation.data.installer.AppInstallerManager
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.room.dao.StoreDao
+import com.brax.apkstation.data.room.entity.Download
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
@@ -33,8 +34,9 @@ class DownloadWorker @AssistedInject constructor(
     @Assisted private val context: Context,
     @Assisted workerParams: WorkerParameters,
     private val storeDao: StoreDao,
-    private val installer: AppInstaller,
-    private val okHttpClient: OkHttpClient
+    private val installerManager: AppInstallerManager,
+    private val okHttpClient: OkHttpClient,
+    private val apkRepository: com.brax.apkstation.data.repository.ApkRepository
 ) : CoroutineWorker(context, workerParams) {
 
     private val notificationManager = context.getSystemService<NotificationManager>()!!
@@ -44,9 +46,8 @@ class DownloadWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         val packageName = inputData.getString(KEY_PACKAGE_NAME) ?: return Result.failure()
-        val sessionId = inputData.getLong(KEY_SESSION_ID, -1L)
 
-        Log.i(TAG, "Starting download for $packageName with sessionId: $sessionId")
+        Log.i(TAG, "Starting download process for $packageName")
 
         return withContext(Dispatchers.IO) {
             try {
@@ -55,25 +56,28 @@ class DownloadWorker @AssistedInject constructor(
                         workDataOf(KEY_ERROR to "Download not found in database")
                     )
 
-                // Validate download URL is present
-                if (download.url == null) {
-                    Log.e(
-                        TAG,
-                        "Download URL is null for $packageName. /download endpoint may have failed."
-                    )
-                    return@withContext Result.failure(
-                        workDataOf(KEY_ERROR to "Download URL not available")
+                // If URL is not present, fetch it from API first
+                if (download.url.isNullOrBlank()) {
+                    Log.i(TAG, "No download URL for $packageName, fetching from API...")
+                    fetchDownloadUrl(packageName, download) ?: return@withContext Result.failure(
+                        workDataOf(KEY_ERROR to "Failed to get download URL")
                     )
                 }
 
+                // Re-fetch download to get updated URL and MD5 after fetchDownloadUrl
+                val updatedDownload = storeDao.getDownload(packageName)
+                    ?: return@withContext Result.failure(
+                        workDataOf(KEY_ERROR to "Download not found after URL fetch")
+                    )
+
                 // Try to set foreground notification (may fail if quota exhausted on Android 14+)
                 try {
-                    setForeground(getForegroundInfo(download.displayName, 0))
+                    setForeground(getForegroundInfo(updatedDownload.displayName, 0))
                 } catch (e: Exception) {
                     // Quota exhausted or foreground service not allowed
                     // Continue download in background with regular notification
                     Log.w(TAG, "Could not start foreground service (quota exhausted?), continuing in background", e)
-                    showBackgroundNotification(download.displayName, 0)
+                    showBackgroundNotification(updatedDownload.displayName, 0)
                 }
 
                 // Update status to downloading
@@ -81,7 +85,7 @@ class DownloadWorker @AssistedInject constructor(
 
                 // Download the file
                 val downloadedFile =
-                    downloadFile(download.url, download.displayName, download.fileSize)
+                    downloadFile(updatedDownload.url, updatedDownload.displayName, updatedDownload.fileSize)
 
                 // Check if cancelled after download
                 if (isStopped) {
@@ -113,7 +117,7 @@ class DownloadWorker @AssistedInject constructor(
 
                 // Verify file integrity
                 storeDao.updateDownloadStatus(packageName, DownloadStatus.VERIFYING)
-                val md5Hash = download.md5 // Capture to local variable for smart cast
+                val md5Hash = updatedDownload.md5 // Capture to local variable for smart cast
                 if (md5Hash != null) {
                     Log.i(TAG, "Verifying MD5 for $packageName (expected: $md5Hash)")
                     if (!verifyMd5(downloadedFile, md5Hash)) {
@@ -159,9 +163,17 @@ class DownloadWorker @AssistedInject constructor(
                     throw IOException("Download cancelled")
                 }
 
-                // Trigger installation with session ID
+                // Trigger installation using the new installer manager
                 storeDao.updateDownloadStatus(packageName, DownloadStatus.INSTALLING)
-                installer.install(packageName, sessionId)
+                
+                // Get the download entity
+                val downloadEntity = storeDao.getDownload(packageName)
+                if (downloadEntity != null) {
+                    installerManager.getPreferredInstaller().install(downloadEntity)
+                    Log.i(TAG, "Triggered installation for $packageName")
+                } else {
+                    Log.e(TAG, "Download entity not found for $packageName after download completed")
+                }
 
                 Result.success()
             } catch (e: Exception) {
@@ -184,6 +196,64 @@ class DownloadWorker @AssistedInject constructor(
         }
     }
 
+    /**
+     * Fetch download URL from API
+     * This can take time if the app needs to be fetched from external source
+     */
+    private suspend fun fetchDownloadUrl(packageName: String, download: Download): String? {
+        return try {
+            Log.i(TAG, "Fetching download URL from API for $packageName")
+            
+            // Get app info to extract UUID
+            val app = storeDao.findApplicationByPackageName(packageName)
+            val uuid = app?.uuid
+            val versionCode = download.versionCode
+            
+            when (val result = apkRepository.getDownloadUrl(
+                uuid = uuid,
+                packageName = if (uuid == null) packageName else null,
+                versionCode = if (versionCode > 0) versionCode else null
+            )) {
+                is com.brax.apkstation.utils.Result.Success -> {
+                    val downloadResponse = result.data
+                    
+                    when {
+                        // URL is ready
+                        downloadResponse.type == "download" || 
+                        (downloadResponse.type == null && downloadResponse.url.isNotEmpty()) -> {
+                            Log.i(TAG, "Download URL received for $packageName")
+                            
+                            // Update download entry with URL and MD5
+                            storeDao.updateDownload(download.copy(
+                                url = downloadResponse.url,
+                                md5 = downloadResponse.md5
+                            ))
+                            
+                            downloadResponse.url
+                        }
+                        
+                        // App needs to be fetched - this shouldn't happen with the new flow
+                        // We'll just retry or fail
+                        else -> {
+                            Log.e(TAG, "App needs to be fetched from external source (type: ${downloadResponse.type})")
+                            null
+                        }
+                    }
+                }
+                
+                is com.brax.apkstation.utils.Result.Error -> {
+                    Log.e(TAG, "Failed to get download URL: ${result.message}")
+                    null
+                }
+                
+                else -> null
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception fetching download URL for $packageName", e)
+            null
+        }
+    }
+
     private suspend fun downloadFile(
         url: String?,
         displayName: String,
@@ -192,24 +262,19 @@ class DownloadWorker @AssistedInject constructor(
         if (url == null) throw IOException("Download URL is null")
 
         val packageName = inputData.getString(KEY_PACKAGE_NAME)!!
-        val sessionId = inputData.getLong(KEY_SESSION_ID, -1L)
         val downloadDir = File(context.filesDir, "downloads/$packageName")
         downloadDir.mkdirs()
 
         // Determine file name and extension from URL or default to APK
         val fileName = url.substringAfterLast('/').ifBlank { "$packageName.apk" }
         val file = File(downloadDir, fileName)
-        // CRITICAL: Use session-specific tmp file to prevent conflicts between downloads!
-        val tmpFile = File(file.absolutePath + ".tmp_session_$sessionId")
+        val tmpFile = File(file.absolutePath + ".tmp")
 
-        // Clean up any old tmp files from previous sessions
-        downloadDir.listFiles { _, name -> name.startsWith(fileName) && name.contains(".tmp_session_") }
-            ?.forEach { oldTmp ->
-                if (oldTmp != tmpFile) { // Don't delete our own tmp file
-                    Log.i(TAG, "Cleaning up old tmp file: ${oldTmp.name}")
-                    oldTmp.delete()
-                }
-            }
+        // Clean up any old tmp files
+        downloadDir.listFiles { _, name -> name.endsWith(".tmp") }?.forEach { oldTmp ->
+            Log.i(TAG, "Cleaning up old tmp file: ${oldTmp.name}")
+            oldTmp.delete()
+        }
 
         Log.i(TAG, "Downloading from: $url")
         Log.i(TAG, "Saving to: ${file.absolutePath}")
@@ -415,7 +480,6 @@ class DownloadWorker @AssistedInject constructor(
 
     companion object {
         const val KEY_PACKAGE_NAME = "package_name"
-        const val KEY_SESSION_ID = "session_id"
         const val KEY_PROGRESS = "progress"
         const val KEY_DOWNLOADED_BYTES = "downloaded_bytes"
         const val KEY_TOTAL_BYTES = "total_bytes"

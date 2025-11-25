@@ -12,22 +12,10 @@ import androidx.compose.runtime.Immutable
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.network.dto.ApkDetailsDto
-import com.brax.apkstation.data.network.dto.DownloadResponseDto
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
-import com.brax.apkstation.data.workers.DownloadWorker
-import com.brax.apkstation.data.workers.RequestDownloadUrlWorker
-import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_PACKAGE_NAME
-import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_SESSION_ID
-import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_UUID
-import com.brax.apkstation.data.workers.RequestDownloadUrlWorker.Companion.KEY_VERSION_CODE
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.Result
@@ -35,7 +23,6 @@ import com.brax.apkstation.utils.formatFileSize
 import com.brax.apkstation.utils.preferences.AppPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -48,7 +35,7 @@ import javax.inject.Inject
 @HiltViewModel
 class AppInfoViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
-    private val workManager: WorkManager,
+    private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
     appPreferencesRepository: AppPreferencesRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -72,38 +59,93 @@ class AppInfoViewModel @Inject constructor(
     private var connectivityManager: ConnectivityManager? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
-    // Track the monitoring coroutine so we can cancel it
-    private var monitoringJob: Job? = null
-
-    // Track current download session ID to ignore phantom installations from old sessions
-    // Map of packageName -> CURRENT sessionId (only the latest is valid)
-    private val downloadSessions = mutableMapOf<String, Long>()
-    private var sessionIdCounter = 0L
-
-    // Track which sessions have been consumed (to prevent reuse)
-    private val consumedSessions = mutableSetOf<Long>()
-
-    // Track when we cancelled a download - ignore installations within X seconds after cancel
-    private val cancelTimestamps = mutableMapOf<String, Long>()
-
     // Cache the full APK details to avoid redundant API calls
     private var cachedApkDetails: ApkDetailsDto? = null
     
-    // Track active install job so we can handle cancellation properly
-    private var installJob: Job? = null
+    init {
+        // Observe installation events
+        observeInstallationEvents()
+        
+        // Observe download state
+        observeDownloadState()
+    }
+    
+    /**
+     * Observe installation events from EventFlow
+     */
+    private fun observeInstallationEvents() {
+        viewModelScope.launch {
+            com.brax.apkstation.app.android.StoreApplication.events.installerEvent.collect { event ->
+                val currentPackageName = _uiState.value.appDetails?.packageName ?: return@collect
+                
+                if (event.packageName == currentPackageName) {
+                    when (event) {
+                        is com.brax.apkstation.data.event.InstallerEvent.Installed -> {
+                            handleInstallationComplete(event.packageName)
+                        }
+                        is com.brax.apkstation.data.event.InstallerEvent.Failed -> {
+                            handleInstallationFailed(event.packageName, event.error)
+                        }
+                        is com.brax.apkstation.data.event.InstallerEvent.Installing -> {
+                            updateAppStatus(AppStatus.INSTALLING)
+                        }
+                        is com.brax.apkstation.data.event.InstallerEvent.Uninstalled -> {
+                            updateAppStatus(AppStatus.NOT_INSTALLED)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe download state from DownloadHelper
+     */
+    private fun observeDownloadState() {
+        viewModelScope.launch {
+            downloadHelper.downloadsList.collect { downloads ->
+                val currentPackageName = _uiState.value.appDetails?.packageName ?: return@collect
+                val download = downloads.find { it.packageName == currentPackageName }
+                
+                download?.let {
+                    val status = when (it.status) {
+                        DownloadStatus.QUEUED,
+                        DownloadStatus.DOWNLOADING,
+                        DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
+                        DownloadStatus.INSTALLING -> {
+                            val hasUpdate = _uiState.value.appDetails?.hasUpdate ?: false
+                            if (hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING
+                        }
+                        DownloadStatus.FAILED,
+                        DownloadStatus.CANCELLED -> {
+                            // Handled by dedicated error handling
+                            return@let
+                        }
+                        else -> return@let
+                    }
+                    
+                    updateAppStatus(status)
+                }
+            }
+        }
+    }
+    
+    /**
+     * Update app status in UI
+     */
+    private fun updateAppStatus(newStatus: AppStatus) {
+        _uiState.update { state ->
+            state.appDetails?.let { app ->
+                state.copy(appDetails = app.copy(status = newStatus))
+            } ?: state
+        }
+    }
 
     /**
      * Clean up resources when ViewModel is destroyed
      */
     override fun onCleared() {
         super.onCleared()
-        
-        // Cancel any active install job
-        installJob?.cancel()
-        
-        // Note: We can't clean up downloads here because viewModelScope is already cancelled
-        // The stale download cleanup in StoreLendingViewModel will handle this case
-        Log.i("AppInfoViewModel", "ViewModel cleared - any in-progress downloads will be cleaned up by stale download cleanup")
         
         // Unregister network callback
         networkCallback?.let {
@@ -266,11 +308,7 @@ class AppInfoViewModel @Inject constructor(
      * Download and install app from Lunr API
      */
     fun installApp() {
-        // Cancel any previous install job
-        installJob?.cancel()
-        
-        // Start new install job and track it
-        installJob = viewModelScope.launch {
+        viewModelScope.launch {
             _uiState.value.appDetails?.let { app ->
                 if (!_uiState.value.isConnected) {
                     _uiState.update { it.copy(errorMessage = "Network connection unavailable") }
@@ -278,39 +316,16 @@ class AppInfoViewModel @Inject constructor(
                 }
 
                 try {
-                    val sessionInfo = prepareNewDownloadSession(app.packageName)
                     val apkDetails = getApkDetailsForDownload(app)
 
-                    // Create download entry first (without URL)
+                    // Create download entry and save to database
                     createAndSaveDownload(app, apkDetails)
 
-                    // Show message about potential wait time
-                    Log.i("AppInfoViewModel", "Requesting download for ${app.packageName}. This may take up to 3 minutes if the app needs to be fetched from external source.")
+                    // Enqueue download via DownloadHelper - it handles everything
+                    val download = Download.fromApkDetails(apkDetails, false, app.hasUpdate)
+                    downloadHelper.enqueueDownload(download)
                     
-                    // Enqueue RequestDownloadUrlWorker to handle the potentially long-running request
-                    // This runs in the background so the user can navigate away
-                    val latestVersion = apkDetails.versions.firstOrNull()
-                    val uuid = app.uuid?.takeIf { it.isNotEmpty() }
-                    
-                    val requestWorkRequest = OneTimeWorkRequestBuilder<RequestDownloadUrlWorker>()
-                        .setInputData(
-                            workDataOf(
-                                KEY_PACKAGE_NAME to app.packageName,
-                                KEY_SESSION_ID to sessionInfo.newSessionId,
-                                KEY_UUID to uuid,
-                                KEY_VERSION_CODE to (latestVersion?.versionCode ?: -1)
-                            )
-                        )
-                        .build()
-                    
-                    workManager.enqueueUniqueWork(
-                        "request_download_${app.packageName}_session_${sessionInfo.newSessionId}",
-                        androidx.work.ExistingWorkPolicy.REPLACE,
-                        requestWorkRequest
-                    )
-                    
-                    // Start monitoring the download process
-                    startDownloadMonitoring(app.packageName)
+                    Log.i("AppInfoViewModel", "Enqueued download for ${app.packageName} via DownloadHelper")
                 } catch (e: Exception) {
                     // Handle errors during setup
                     Log.e("AppInfoViewModel", "Failed to start download for ${app.packageName}", e)
@@ -320,7 +335,6 @@ class AppInfoViewModel @Inject constructor(
                             state.copy(appDetails = details.copy(status = AppStatus.NOT_INSTALLED))
                         } ?: state
                     }
-                    apkRepository.deleteDownload(app.packageName)
                     
                     val errorMsg = "Failed to start download: ${e.message}"
                     _uiState.update { it.copy(errorMessage = errorMsg) }
@@ -370,36 +384,6 @@ class AppInfoViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Prepare a new download session by cleaning up old sessions
-     */
-    private suspend fun prepareNewDownloadSession(packageName: String): DownloadSessionInfo {
-        cancelTimestamps.remove(packageName)
-
-        val oldSessionId = downloadSessions[packageName]
-        val newSessionId = ++sessionIdCounter
-        downloadSessions[packageName] = newSessionId
-
-        // Cancel previous monitoring job
-        monitoringJob?.cancel()
-        monitoringJob = null
-
-        // Delete old download entry
-        val existingDownload = apkRepository.getDownload(packageName)
-        if (existingDownload != null) {
-            apkRepository.deleteDownload(packageName)
-        }
-
-        // Cancel old WorkManager task
-        if (oldSessionId != null) {
-            val oldWorkName = "apkstation_download_session_$oldSessionId"
-            workManager.cancelUniqueWork(oldWorkName)
-        }
-
-        delay(500) // Give WorkManager time to stop
-
-        return DownloadSessionInfo(oldSessionId, newSessionId)
-    }
 
     /**
      * Get APK details from cache or fetch from API
@@ -439,47 +423,6 @@ class AppInfoViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Fetch download URL from /download endpoint
-     * Uses UUID if available, otherwise falls back to package name
-     * Note: versionCode is optional - when versions array is empty (app not cached),
-     * we call without versionCode and let the API fetch from external source
-     */
-    private suspend fun fetchDownloadUrl(
-        app: AppDetailsData,
-        apkDetails: ApkDetailsDto
-    ): DownloadResponseDto {
-        // Get latest version if available, null if versions array is empty
-        val latestVersion = apkDetails.versions.firstOrNull()
-        
-        // If no versions available, we'll call /download without versionCode
-        // This happens when app is not yet cached and needs to be fetched from external source
-        if (latestVersion == null) {
-            Log.d("AppInfoViewModel", "No versions available for ${app.packageName}, requesting from external source")
-        }
-
-        // Use UUID if not empty/null, otherwise use package name
-        val uuid = app.uuid?.takeIf { it.isNotEmpty() }
-        val packageName = if (uuid == null) app.packageName else null
-
-        when (val result = apkRepository.getDownloadUrl(
-            uuid = uuid,
-            packageName = packageName,
-            versionCode = latestVersion?.versionCode // null if no versions available
-        )) {
-            is Result.Success -> {
-                return result.data
-            }
-
-            is Result.Error -> {
-                throw Exception("Failed to get download URL: ${result.message}")
-            }
-
-            else -> {
-                throw Exception("Failed to fetch download URL")
-            }
-        }
-    }
 
     /**
      * Create download entity and save to database
@@ -522,254 +465,15 @@ class AppInfoViewModel @Inject constructor(
         apkRepository.saveDownloadToDb(download)
     }
 
-    /**
-     * Enqueue download worker with session ID
-     */
-    private fun enqueueDownloadWorker(packageName: String, sessionId: Long) {
-        val uniqueWorkName = "apkstation_download_session_$sessionId"
-
-        val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
-            .setInputData(
-                workDataOf(
-                    DownloadWorker.KEY_PACKAGE_NAME to packageName,
-                    DownloadWorker.KEY_SESSION_ID to sessionId
-                )
-            )
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
-
-        workManager.enqueueUniqueWork(
-            uniqueWorkName,
-            ExistingWorkPolicy.KEEP,
-            workRequest
-        )
-    }
 
     /**
-     * Start monitoring download/install status
+     * Handle installation complete event from EventFlow
      */
-    private fun startDownloadMonitoring(packageName: String) {
-        monitoringJob = viewModelScope.launch {
-            monitorDownloadStatus(packageName)
-        }
-    }
-
-    /**
-     * Monitor download status by polling the database
-     */
-    private suspend fun monitorDownloadStatus(packageName: String) {
-        var lastStatus: AppStatus? = null
-        var pollInterval = 500L
-
-        while (true) {
-            delay(pollInterval)
-
-            val currentApp = _uiState.value.appDetails ?: break
-            val download = apkRepository.getDownload(packageName)
-
-            when {
-                download == null -> {
-                    if (handleDownloadDeleted(currentApp, lastStatus)) break
-                    lastStatus =
-                        if (currentApp.hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING
-                    continue
-                }
-
-                download.status == DownloadStatus.DOWNLOADING ||
-                        download.status == DownloadStatus.VERIFYING -> {
-                    updateStatusIfChanged(
-                        currentApp,
-                        AppStatus.DOWNLOADING,
-                        lastStatus
-                    )?.let { lastStatus = it }
-                }
-
-                download.status == DownloadStatus.INSTALLING -> {
-                    val newStatus =
-                        if (currentApp.hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING
-                    updateStatusIfChanged(currentApp, newStatus, lastStatus)?.let {
-                        lastStatus = it
-                        pollInterval = 250L
-                    }
-                }
-
-                download.status == DownloadStatus.FAILED ||
-                        download.status == DownloadStatus.CANCELLED -> {
-                    handleDownloadFailedOrCancelled(currentApp, lastStatus)
-                    break
-                }
-            }
-        }
-    }
-
-    /**
-     * Handle case when download entry is deleted (installation triggered or app marked as REQUESTED)
-     */
-    private suspend fun handleDownloadDeleted(
-        currentApp: AppDetailsData,
-        lastStatus: AppStatus?
-    ): Boolean {
-        if (currentApp.status == AppStatus.NOT_INSTALLED ||
-            currentApp.status == AppStatus.UPDATE_AVAILABLE ||
-            currentApp.status == AppStatus.INSTALLED
-        ) {
-            return true
-        }
-
-        // Check if app was marked as REQUESTED in the database
-        val dbApp = apkRepository.getAppByPackageName(currentApp.packageName)
-        if (dbApp?.status == AppStatus.REQUESTED) {
-            Log.i("AppInfoViewModel", "App ${currentApp.packageName} marked as REQUESTED - stopping monitoring")
-            _uiState.update { state ->
-                state.copy(
-                    appDetails = currentApp.copy(status = AppStatus.REQUESTED),
-                    errorMessage = "App is being prepared from external source. It will be available in a few minutes."
-                )
-            }
-            return true
-        }
-
-        val targetStatus = if (currentApp.hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING
-
-        if (lastStatus != targetStatus) {
-            _uiState.update { state ->
-                state.copy(appDetails = currentApp.copy(status = targetStatus))
-            }
-        }
-
-        delay(1000)
-
-        val checkDownload = apkRepository.getDownload(currentApp.packageName)
-        if (checkDownload?.status == DownloadStatus.FAILED) {
-            _uiState.update { state ->
-                state.copy(
-                    appDetails = currentApp.copy(status = AppStatus.NOT_INSTALLED),
-                    errorMessage = "Installation failed"
-                )
-            }
-            return true
-        }
-
-        return false
-    }
-
-    /**
-     * Update status if it changed
-     */
-    private fun updateStatusIfChanged(
-        currentApp: AppDetailsData,
-        newStatus: AppStatus,
-        lastStatus: AppStatus?
-    ): AppStatus? {
-        return if (newStatus != lastStatus) {
-            _uiState.update { state ->
-                state.copy(appDetails = currentApp.copy(status = newStatus))
-            }
-            newStatus
-        } else {
-            null
-        }
-    }
-
-    /**
-     * Handle download failed or cancelled
-     */
-    private suspend fun handleDownloadFailedOrCancelled(
-        currentApp: AppDetailsData,
-        lastStatus: AppStatus?
-    ) {
-        val installedVersionInfo = getInstalledVersionInfo(currentApp.packageName)
-        val isStillInstalled = installedVersionInfo != null
-
-        if (isStillInstalled) {
-            val installedVersionCode = installedVersionInfo?.second
-            val latestVersionCode = currentApp.versionCode
-            val stillHasUpdate = if (installedVersionCode != null && latestVersionCode != null) {
-                installedVersionCode < latestVersionCode
-            } else {
-                false
-            }
-
-            val finalStatus =
-                if (stillHasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
-            _uiState.update { state ->
-                state.copy(
-                    appDetails = currentApp.copy(
-                        status = finalStatus,
-                        installedVersion = installedVersionInfo?.first,
-                        installedVersionCode = installedVersionCode,
-                        hasUpdate = stillHasUpdate,
-                        latestVersionCode = latestVersionCode
-                    )
-                )
-            }
-        } else {
-            _uiState.update { state ->
-                state.copy(appDetails = currentApp.copy(status = AppStatus.NOT_INSTALLED))
-            }
-        }
-
-        if (lastStatus != null) {
-            _uiState.update { it.copy(errorMessage = "Installation failed or cancelled") }
-        }
-    }
-
-    /**
-     * Data class to hold session information
-     */
-    private data class DownloadSessionInfo(
-        val oldSessionId: Long?,
-        val newSessionId: Long
-    )
-
-    /**
-     * Handle installation complete event from broadcast receiver
-     * Called when InstallStatusReceiver confirms successful installation
-     */
-    fun handleInstallationComplete(packageName: String, sessionId: Long? = null) {
+    fun handleInstallationComplete(packageName: String) {
         viewModelScope.launch {
-            val currentSessionId = downloadSessions[packageName]
+            val app = _uiState.value.appDetails ?: return@launch
 
-            val app = _uiState.value.appDetails
-            if (app?.packageName != packageName) {
-                return@launch
-            }
-
-            // NUCLEAR OPTION: Check if we recently cancelled - ignore ALL installations within 3 seconds
-            val cancelTime = cancelTimestamps[packageName]
-            if (cancelTime != null) {
-                val timeSinceCancel = System.currentTimeMillis() - cancelTime
-                if (timeSinceCancel < 3000) {
-                    return@launch
-                } else {
-                    // More than 3 seconds passed, clear the timestamp
-                    cancelTimestamps.remove(packageName)
-                }
-            }
-
-            // CRITICAL: Check session ID to ignore phantom installations from old downloads
-            // Handle -1L as "no session id"
-            val broadcastSession = if (sessionId == -1L) null else sessionId
-
-            // Check if this session was already consumed
-            if (broadcastSession != null && consumedSessions.contains(broadcastSession)) {
-                return@launch
-            }
-
-            // Check if this is the current valid session
-            if (broadcastSession != null && currentSessionId != null && broadcastSession != currentSessionId) {
-                return@launch
-            }
-
-            // If no sessionId provided (from system broadcast), only accept if we don't have a current session
-            if (broadcastSession != null) {
-                // Mark this session as consumed to prevent any duplicates
-                consumedSessions.add(broadcastSession)
-                // Clear the current session
-                downloadSessions.remove(packageName)
-            }
-
-            // Remember if this was an update or fresh install
+            // Remember if this was an update
             val wasUpdate = app.hasUpdate || app.status == AppStatus.UPDATING
 
             // Give PackageManager a moment to update
@@ -815,23 +519,18 @@ class AppInfoViewModel @Inject constructor(
     }
 
     /**
-     * Handle installation failure (when user cancels or installation fails)
+     * Handle installation failure from EventFlow
      */
     fun handleInstallationFailed(packageName: String, errorMessage: String?) {
         viewModelScope.launch {
-            val app = _uiState.value.appDetails
-            if (app == null || app.packageName != packageName) return@launch
+            val app = _uiState.value.appDetails ?: return@launch
 
             // Check if app is still installed (for update failures)
             val installedVersionInfo = getInstalledVersionInfo(packageName)
             val isStillInstalled = installedVersionInfo != null
 
-            // Delete download from database
-            apkRepository.deleteDownload(packageName)
-
             if (isStillInstalled) {
                 // App is still installed - it was an update attempt that failed
-                // Return to UPDATE_AVAILABLE state
                 val latestVersionCode = app.versionCode
                 val installedVersionCode = installedVersionInfo?.second
                 val stillHasUpdate =
@@ -892,86 +591,14 @@ class AppInfoViewModel @Inject constructor(
     fun cancelDownload() {
         viewModelScope.launch {
             _uiState.value.appDetails?.let { app ->
-                // CRITICAL: Invalidate the current session immediately!
-                val oldSessionId = downloadSessions[app.packageName]
-                if (oldSessionId != null) {
-                    // Mark old session as consumed so it will be rejected if it completes
-                    consumedSessions.add(oldSessionId)
-                    // DON'T remove from downloadSessions - we need it for the next installApp() call!
-                    // It will be naturally replaced when the next download starts.
+                try {
+                    // Cancel via DownloadHelper - it handles everything
+                    downloadHelper.cancel(app.packageName)
+                    
+                    _uiState.update { it.copy(errorMessage = "Download cancelled") }
+                } catch (e: Exception) {
+                    _uiState.update { it.copy(errorMessage = "Failed to cancel download: ${e.message}") }
                 }
-
-                // NUCLEAR OPTION: Record cancel timestamp - ignore ALL installations for 3 seconds
-                cancelTimestamps[app.packageName] = System.currentTimeMillis()
-
-                // CRITICAL: Cancel the monitoring job first
-                monitoringJob?.cancel()
-                monitoringJob = null
-
-                // Mark download as CANCELLED so Worker knows to stop (don't delete yet)
-                val existingDownload = apkRepository.getDownload(app.packageName)
-                if (existingDownload != null) {
-                    apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.CANCELLED)
-                }
-
-                // Cancel work via WorkManager using the old sessionId
-                if (oldSessionId != null) {
-                    val oldWorkName = "apkstation_download_session_$oldSessionId"
-                    workManager.cancelUniqueWork(oldWorkName)
-                }
-
-                // Give Worker time to see CANCELLED status and stop
-                delay(500)
-
-                // Now delete the cancelled download entry
-                apkRepository.deleteDownload(app.packageName)
-
-                // Check if app is still installed (for cancelled updates)
-                val installedVersionInfo = getInstalledVersionInfo(app.packageName)
-                val isStillInstalled = installedVersionInfo != null
-
-                if (isStillInstalled) {
-                    // App is still installed - this was an update download that was cancelled
-                    // Return to UPDATE_AVAILABLE or INSTALLED state
-                    val installedVersionCode = installedVersionInfo?.second
-                    val latestVersionCode = app.versionCode
-                    val stillHasUpdate =
-                        if (installedVersionCode != null && latestVersionCode != null) {
-                            installedVersionCode < latestVersionCode
-                        } else {
-                            false
-                        }
-
-                    // Update database with hasUpdate flag
-                    if (latestVersionCode != null) {
-                        apkRepository.updateVersionInfo(
-                            app.packageName,
-                            latestVersionCode,
-                            stillHasUpdate
-                        )
-                    }
-
-                    val finalStatus =
-                        if (stillHasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
-                    _uiState.update { state ->
-                        state.copy(
-                            appDetails = app.copy(
-                                status = finalStatus,
-                                installedVersion = installedVersionInfo?.first,
-                                installedVersionCode = installedVersionCode,
-                                hasUpdate = stillHasUpdate,
-                                latestVersionCode = latestVersionCode
-                            )
-                        )
-                    }
-                } else {
-                    // App is not installed - fresh install download was cancelled
-                    _uiState.update { state ->
-                        state.copy(appDetails = app.copy(status = AppStatus.NOT_INSTALLED))
-                    }
-                }
-
-                _uiState.update { it.copy(errorMessage = "Download cancelled") }
             }
         }
     }
@@ -1106,7 +733,7 @@ class AppInfoViewModel @Inject constructor(
      * Get actual app status by checking:
      * 1. If there's an active download
      * 2. If app is actually installed on device (via PackageManager)
-     * 3. If app is in REQUESTED state (from database)
+     * 3. If app has special status in database (UNAVAILABLE)
      * 4. If an update is available
      */
     private suspend fun getActualAppStatus(
@@ -1154,10 +781,9 @@ class AppInfoViewModel @Inject constructor(
             }
         }
 
-        // Check database for special statuses (REQUESTED, UNAVAILABLE)
+        // Check database for special statuses (UNAVAILABLE)
         val dbApp = apkRepository.getAppByPackageName(packageName)
         when (dbApp?.status) {
-            AppStatus.REQUESTED -> return AppStatus.REQUESTED
             AppStatus.UNAVAILABLE -> return AppStatus.UNAVAILABLE
             else -> {
                 // No special status - check installation status

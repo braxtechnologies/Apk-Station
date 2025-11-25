@@ -2,9 +2,6 @@ package com.brax.apkstation.di
 
 import android.content.Context
 import androidx.work.WorkManager
-import com.brax.apkstation.data.installer.AppInstaller
-import com.brax.apkstation.data.installer.SessionInstaller
-import dagger.Binds
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -14,20 +11,11 @@ import javax.inject.Singleton
 
 /**
  * Hilt module for providing installer and work manager dependencies
+ * 
+ * Note: The installers (NewSessionInstaller, AppInstallerManager) are already
+ * annotated with @Singleton and @Inject, so they don't need explicit bindings here.
+ * Hilt will automatically provide them.
  */
-@Module
-@InstallIn(SingletonComponent::class)
-abstract class InstallerModule {
-    
-    /**
-     * Bind SessionInstaller as the implementation of AppInstaller
-     */
-    @Binds
-    @Singleton
-    abstract fun bindAppInstaller(
-        sessionInstaller: SessionInstaller
-    ): AppInstaller
-}
 
 /**
  * Module for providing WorkManager instance
@@ -44,5 +32,3 @@ object WorkManagerModule {
         return WorkManager.getInstance(context)
     }
 }
-
-
