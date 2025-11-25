@@ -6,10 +6,10 @@ import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.util.Log
+import androidx.core.net.toUri
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.data.room.dao.StoreDao
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -20,7 +20,6 @@ import java.io.IOException
 import java.util.zip.ZipEntry
 import javax.inject.Inject
 import javax.inject.Singleton
-import androidx.core.net.toUri
 
 /**
  * Installer using Android's PackageInstaller API
@@ -463,6 +462,10 @@ class SessionInstaller @Inject constructor(
             flags
         )
         
+        // Commit the session
+        // Note: On Android 14+ (API 34+), if app is in background, the install prompt
+        // may not show immediately. Android will show a notification that user can tap
+        // to proceed with the installation. This is a platform restriction we cannot bypass.
         session.commit(pendingIntent.intentSender)
         session.close()
         

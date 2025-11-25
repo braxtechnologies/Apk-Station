@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import com.brax.apkstation.data.auth.TokenManager
+import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.network.LunrApiService
 import com.brax.apkstation.data.network.dto.ApkDetailsDto
 import com.brax.apkstation.data.network.dto.ApkPreviewDto
@@ -14,6 +15,7 @@ import com.brax.apkstation.data.network.dto.RefreshResponseDto
 import com.brax.apkstation.data.network.dto.UpdateCheckRequestDto
 import com.brax.apkstation.data.room.dao.StoreDao
 import com.brax.apkstation.data.room.entity.DBApplication
+import com.brax.apkstation.data.room.entity.Download
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Result
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -645,11 +647,18 @@ class ApkRepository @Inject constructor(
     suspend fun saveApkDetailsToDb(details: ApkDetailsDto, status: AppStatus) {
         saveAppToDatabase(details, status)
     }
-    
+
+    /**
+     * Observe all apps changes
+     */
+    suspend fun observeAllAps(): Flow<List<DBApplication?>> {
+        return storeDao.getAllApplications()
+    }
+
     /**
      * Save download to database
      */
-    suspend fun saveDownloadToDb(download: com.brax.apkstation.data.room.entity.Download) {
+    suspend fun saveDownloadToDb(download: Download) {
         storeDao.insertDownload(download)
     }
     
@@ -663,7 +672,7 @@ class ApkRepository @Inject constructor(
     /**
      * Update download status
      */
-    suspend fun updateDownloadStatus(packageName: String, status: com.brax.apkstation.data.model.DownloadStatus) {
+    suspend fun updateDownloadStatus(packageName: String, status: DownloadStatus) {
         storeDao.updateDownloadStatus(packageName, status)
     }
     
@@ -677,21 +686,21 @@ class ApkRepository @Inject constructor(
     /**
      * Get download from database
      */
-    suspend fun getDownload(packageName: String): com.brax.apkstation.data.room.entity.Download? {
+    suspend fun getDownload(packageName: String): Download? {
         return storeDao.getDownload(packageName)
     }
     
     /**
      * Get all downloads from database
      */
-    suspend fun getAllDownloads(): List<com.brax.apkstation.data.room.entity.Download> {
+    suspend fun getAllDownloads(): List<Download> {
         return storeDao.getAllDownloadsList()
     }
     
     /**
      * Observe all downloads from database as Flow
      */
-    fun observeAllDownloads(): Flow<List<com.brax.apkstation.data.room.entity.Download>> {
+    fun observeAllDownloads(): Flow<List<Download>> {
         return storeDao.getAllDownloads()
     }
     

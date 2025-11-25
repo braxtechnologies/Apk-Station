@@ -115,6 +115,8 @@ class InstallStatusReceiver : BroadcastReceiver() {
             context,
             title,
             message,
+            wasUpdate,
+            false,
             packageName.hashCode()
         )
     }
@@ -164,6 +166,8 @@ class InstallStatusReceiver : BroadcastReceiver() {
                 context,
                 "Installation Failed",
                 error,
+                wasUpdate = false,
+                wasError = true,
                 packageName.hashCode()
             )
         } else {
@@ -187,6 +191,8 @@ class InstallStatusReceiver : BroadcastReceiver() {
         context: Context,
         title: String,
         message: String,
+        wasUpdate: Boolean,
+        wasError: Boolean = false,
         notificationId: Int
     ) {
         val notificationManager = context.getSystemService<NotificationManager>()
@@ -202,11 +208,19 @@ class InstallStatusReceiver : BroadcastReceiver() {
         }
         notificationManager.createNotificationChannel(channel)
 
+        val smallIcon = if (wasError) {
+            android.R.drawable.stat_notify_error
+        } else if (wasUpdate) {
+            android.R.drawable.stat_sys_download_done
+        } else {
+            android.R.drawable.stat_sys_download_done
+        }
+
         // Build and show notification
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(smallIcon)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()

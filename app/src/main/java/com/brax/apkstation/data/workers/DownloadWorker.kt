@@ -66,8 +66,15 @@ class DownloadWorker @AssistedInject constructor(
                     )
                 }
 
-                // Set foreground notification
-                setForeground(getForegroundInfo(download.displayName, 0))
+                // Try to set foreground notification (may fail if quota exhausted on Android 14+)
+                try {
+                    setForeground(getForegroundInfo(download.displayName, 0))
+                } catch (e: Exception) {
+                    // Quota exhausted or foreground service not allowed
+                    // Continue download in background with regular notification
+                    Log.w(TAG, "Could not start foreground service (quota exhausted?), continuing in background", e)
+                    showBackgroundNotification(download.displayName, 0)
+                }
 
                 // Update status to downloading
                 storeDao.updateDownloadStatus(packageName, DownloadStatus.DOWNLOADING)
@@ -305,8 +312,13 @@ class DownloadWorker @AssistedInject constructor(
             )
         )
 
-        // Update notification
-        setForeground(getForegroundInfo(displayName, progress))
+        // Update notification (try foreground, fallback to background)
+        try {
+            setForeground(getForegroundInfo(displayName, progress))
+        } catch (e: Exception) {
+            // Foreground service not available, use regular notification
+            showBackgroundNotification(displayName, progress)
+        }
     }
 
     private fun getForegroundInfo(appName: String, progress: Int): ForegroundInfo {
@@ -346,6 +358,31 @@ class DownloadWorker @AssistedInject constructor(
             setSound(null, null)
         }
         notificationManager.createNotificationChannel(channel)
+    }
+    
+    /**
+     * Show background notification when foreground service is not available
+     */
+    private fun showBackgroundNotification(appName: String, progress: Int) {
+        createNotificationChannel()
+        
+        val contentText = if (progress > 0) "$appName - $progress%" else "$appName - Starting..."
+        
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle("Apk Station - Downloading")
+            .setContentText(contentText)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setProgress(100, progress, progress == 0)
+            .setOngoing(true)
+            .setSilent(true)
+            .setStyle(
+                NotificationCompat.BigTextStyle()
+                    .bigText(contentText)
+                    .setBigContentTitle("Apk Station - Downloading")
+            )
+            .build()
+        
+        notificationManager.notify(NOTIFICATION_ID, notification)
     }
 
     /**
