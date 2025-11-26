@@ -220,8 +220,10 @@ fun StoreLendingScreen(
 
     // Collect error messages
     LaunchedEffect(uiState.errorMessage) {
-        uiState.errorMessage?.let {
-            snackbarHostState.showSnackbar(it)
+        uiState.errorMessage?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            // Clear the error message after showing it
+            viewModel.clearErrorMessage()
         }
     }
 

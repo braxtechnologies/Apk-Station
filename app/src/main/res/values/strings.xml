@@ -60,7 +60,7 @@
     
     <!-- Installer Status -->
     <string name="installer_status_success">Installation successful</string>
-    <string name="installer_status_user_action">Installation cancelled by user</string>
+    <string name="installer_status_user_action">Installation cancelled</string>
     <string name="installer_status_failure_blocked">Installation blocked</string>
     <string name="installer_status_failure_conflict">Installation conflict</string>
     <string name="installer_status_failure_incompatible">App is incompatible</string>

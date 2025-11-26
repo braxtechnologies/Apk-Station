@@ -199,6 +199,8 @@ fun AppInfoScreen(
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
+            // Clear the error message after showing it
+            viewModel.clearErrorMessage()
         }
     }
     

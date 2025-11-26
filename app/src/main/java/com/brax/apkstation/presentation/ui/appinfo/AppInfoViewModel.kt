@@ -12,6 +12,7 @@ import androidx.compose.runtime.Immutable
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.brax.apkstation.data.event.InstallerEvent
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.network.dto.ApkDetailsDto
 import com.brax.apkstation.data.repository.ApkRepository
@@ -83,10 +84,11 @@ class AppInfoViewModel @Inject constructor(
                 
                 if (event.packageName == currentPackageName) {
                     when (event) {
-                        is com.brax.apkstation.data.event.InstallerEvent.Installing -> {
+                        is InstallerEvent.Installing -> {
                             updateAppStatus(AppStatus.INSTALLING)
                         }
-                        is com.brax.apkstation.data.event.InstallerEvent.Failed -> {
+
+                        is InstallerEvent.Failed -> {
                             handleInstallationFailed(event.packageName, event.error)
                         }
                         // Installed/Uninstalled handled by database observation
@@ -761,11 +763,17 @@ class AppInfoViewModel @Inject constructor(
                     }
                     _uiState.update { it.copy(errorMessage = message) }
                 } catch (e: Exception) {
-                    Log.e("AppInfoViewModel", "Failed to toggle favorite", e)
-                    _uiState.update { it.copy(errorMessage = "Failed to update favorite") }
+                    _uiState.update { it.copy(errorMessage = "Failed to update favorite: ${e.message}") }
                 }
             }
         }
+    }
+    
+    /**
+     * Clear error message after it has been shown
+     */
+    fun clearErrorMessage() {
+        _uiState.update { it.copy(errorMessage = null) }
     }
 
     /**

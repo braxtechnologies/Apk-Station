@@ -203,7 +203,7 @@ object NotificationHelper {
         )
         
         return NotificationCompat.Builder(context, CHANNEL_INSTALL_STATUS)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(R.drawable.ic_check_circle)
             .setContentTitle("Installation Successful")
             .setContentText("$appName has been installed")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)

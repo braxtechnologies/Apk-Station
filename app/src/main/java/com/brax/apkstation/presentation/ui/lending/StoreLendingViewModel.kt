@@ -212,6 +212,13 @@ class StoreLendingViewModel @Inject constructor(
             }
         }
     }
+    
+    /**
+     * Clear error message after it has been shown
+     */
+    fun clearErrorMessage() {
+        _lendingUiState.update { it.copy(errorMessage = null) }
+    }
 
     /**
      * Retrieve available apps list from API with caching support

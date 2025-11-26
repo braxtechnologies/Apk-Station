@@ -184,7 +184,7 @@ class InstallStatusReceiver : BroadcastReceiver() {
         // If user cancelled and file still exists, set back to COMPLETED so they can retry
         // For other failures, check if file exists before marking as FAILED
         if (download != null && download.apkLocation.isNotEmpty()) {
-            val file = java.io.File(download.apkLocation)
+            val file = File(download.apkLocation)
             if (file.exists()) {
                 // File still exists - set back to COMPLETED so user can retry installation
                 Log.i(TAG, "File exists, setting status to COMPLETED for retry")
@@ -243,7 +243,7 @@ class InstallStatusReceiver : BroadcastReceiver() {
         val smallIcon = if (isError) {
             android.R.drawable.stat_notify_error
         } else {
-            android.R.drawable.stat_sys_download_done
+            com.brax.apkstation.R.drawable.ic_check_circle
         }
 
         // Build and show notification
