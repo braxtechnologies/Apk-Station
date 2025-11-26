@@ -33,6 +33,7 @@ class DownloadHelper @Inject constructor(
 ) {
 
     companion object {
+        private const val TAG = "DownloadHelper"
         const val DOWNLOAD_WORKER = "DOWNLOAD_WORKER"
         const val PACKAGE_NAME = "PACKAGE_NAME"
 
@@ -173,6 +174,70 @@ class DownloadHelper @Inject constructor(
             )
             
         Log.i(TAG, "Triggered download worker for ${download.packageName}")
+    }
+    
+    /**
+     * Clear download entry and files for a specific package
+     */
+    suspend fun clearDownload(packageName: String) {
+        Log.i(TAG, "Clearing download for $packageName")
+        
+        // Cancel work for this package
+        workManager.cancelAllWorkByTag("$DOWNLOAD_WORKER/$packageName")
+        
+        // Delete from database
+        downloadDao.deleteDownload(packageName)
+        
+        // Delete files
+        try {
+            val downloadDir = java.io.File(context.filesDir, "downloads/$packageName")
+            if (downloadDir.exists()) {
+                downloadDir.deleteRecursively()
+                Log.i(TAG, "Deleted download files for $packageName")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete download files for $packageName", e)
+        }
+    }
+    
+    /**
+     * Clear all completed downloads
+     */
+    suspend fun clearCompletedDownloads() {
+        Log.i(TAG, "Clearing all completed downloads")
+        
+        val downloads = downloadDao.getAllDownloadsList()
+        downloads.filter { 
+            it.status == DownloadStatus.COMPLETED ||
+            it.status == DownloadStatus.FAILED ||
+            it.status == DownloadStatus.CANCELLED
+        }.forEach { download ->
+            clearDownload(download.packageName)
+        }
+    }
+    
+    /**
+     * Clear all downloads and their files
+     */
+    suspend fun clearAllDownloads() {
+        Log.i(TAG, "Clearing all downloads")
+        
+        // Cancel all ongoing work
+        workManager.cancelAllWorkByTag(DOWNLOAD_WORKER)
+        
+        // Delete all from database
+        downloadDao.deleteAllDownloads()
+        
+        // Delete all files
+        try {
+            val downloadDir = java.io.File(context.filesDir, "downloads")
+            if (downloadDir.exists()) {
+                downloadDir.deleteRecursively()
+                Log.i(TAG, "Deleted all download files")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete download files", e)
+        }
     }
 }
 

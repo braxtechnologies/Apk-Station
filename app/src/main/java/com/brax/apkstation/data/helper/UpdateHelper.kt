@@ -30,8 +30,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * Helper class to manage app update checking
- * Inspired by AuroraStore's UpdateHelper but adapted for ApkStation
+ * Helper class to manage app update checking and scheduling
  */
 @Singleton
 class UpdateHelper @Inject constructor(

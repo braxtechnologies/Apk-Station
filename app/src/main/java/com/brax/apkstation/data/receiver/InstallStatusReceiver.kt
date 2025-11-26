@@ -179,7 +179,24 @@ class InstallStatusReceiver : BroadcastReceiver() {
         
         // Update database
         val storeDao = database.storeDao()
-        storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+        val download = storeDao.getDownload(packageName)
+        
+        // If user cancelled and file still exists, set back to COMPLETED so they can retry
+        // For other failures, check if file exists before marking as FAILED
+        if (download != null && download.apkLocation.isNotEmpty()) {
+            val file = java.io.File(download.apkLocation)
+            if (file.exists()) {
+                // File still exists - set back to COMPLETED so user can retry installation
+                Log.i(TAG, "File exists, setting status to COMPLETED for retry")
+                storeDao.updateDownloadStatus(packageName, DownloadStatus.COMPLETED)
+            } else {
+                // File doesn't exist - mark as failed
+                storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+            }
+        } else {
+            // No download entry or location - mark as failed
+            storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+        }
         
         // Broadcast installation failure for UI updates
         val broadcastIntent = Intent(ACTION_INSTALLATION_STATUS_CHANGED).apply {

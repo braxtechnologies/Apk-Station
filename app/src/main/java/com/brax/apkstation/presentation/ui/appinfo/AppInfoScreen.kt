@@ -180,20 +180,13 @@ fun AppInfoScreen(
         }
     }
     
-    // Observe lifecycle to refresh status when returning from uninstall
+    // Observe lifecycle to refresh status when returning to screen
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                // Only refresh if NOT currently installing/updating/downloading
-                // (if installing/updating, we're waiting for broadcast confirmation)
-                val currentStatus = uiState.appDetails?.status
-                if (currentStatus != AppStatus.INSTALLING &&
-                    currentStatus != AppStatus.UPDATING &&
-                    currentStatus != AppStatus.DOWNLOADING
-                ) {
-                    // Refresh app status when screen resumes (user might have uninstalled)
-                    viewModel.loadAppDetails(uuid)
-                }
+                // Always refresh to check for download completion, installation, or uninstallation
+                // The viewModel will handle checking actual status from database/PackageManager
+                viewModel.loadAppDetails(uuid)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

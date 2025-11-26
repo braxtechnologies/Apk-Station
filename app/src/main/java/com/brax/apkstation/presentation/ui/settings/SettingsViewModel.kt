@@ -30,6 +30,7 @@ import javax.inject.Inject
 class SettingsViewModel @Inject constructor(
     private val appPreferencesRepository: AppPreferencesRepository,
     private val apkRepository: ApkRepository,
+    private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -42,12 +43,41 @@ class SettingsViewModel @Inject constructor(
     init {
         loadSettings()
         loadCurrentApiUrl()
+        loadCacheSize()
     }
 
     private fun loadSettings() {
         viewModelScope.launch {
             checkNotificationPermission()
             loadFavoritesEnabled()
+        }
+    }
+    
+    private fun loadCacheSize() {
+        viewModelScope.launch {
+            val cacheSize = calculateCacheSize()
+            _uiState.value = _uiState.value.copy(
+                cacheSizeBytes = cacheSize,
+                cacheSizeFormatted = formatFileSize(cacheSize)
+            )
+        }
+    }
+    
+    private fun calculateCacheSize(): Long {
+        val downloadDir = java.io.File(context.filesDir, "downloads")
+        return if (downloadDir.exists()) {
+            downloadDir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+        } else {
+            0L
+        }
+    }
+    
+    private fun formatFileSize(bytes: Long): String {
+        return when {
+            bytes < 1024 -> "$bytes B"
+            bytes < 1024 * 1024 -> String.format("%.2f KB", bytes / 1024.0)
+            bytes < 1024 * 1024 * 1024 -> String.format("%.2f MB", bytes / (1024.0 * 1024.0))
+            else -> String.format("%.2f GB", bytes / (1024.0 * 1024.0 * 1024.0))
         }
     }
 
@@ -308,6 +338,36 @@ class SettingsViewModel @Inject constructor(
             }
         }
     }
+    
+    /**
+     * Clear completed downloads (files that are successfully installed, failed, or cancelled)
+     */
+    fun clearCompletedDownloads() {
+        viewModelScope.launch {
+            try {
+                downloadHelper.clearCompletedDownloads()
+                _debugMessage.emit("Cleared completed downloads")
+                loadCacheSize() // Refresh cache size
+            } catch (e: Exception) {
+                _debugMessage.emit("Failed to clear downloads: ${e.message}")
+            }
+        }
+    }
+    
+    /**
+     * Clear all downloads (including active ones)
+     */
+    fun clearAllCache() {
+        viewModelScope.launch {
+            try {
+                downloadHelper.clearAllDownloads()
+                _debugMessage.emit("Cleared all cached downloads")
+                loadCacheSize() // Refresh cache size
+            } catch (e: Exception) {
+                _debugMessage.emit("Failed to clear cache: ${e.message}")
+            }
+        }
+    }
 }
 
 data class SettingsUiState(
@@ -315,6 +375,8 @@ data class SettingsUiState(
     val shouldRequestNotificationPermission: Boolean = false,
     val shouldOpenNotificationSettings: Boolean = false,
     val favoritesEnabled: Boolean = false,
-    val currentApiUrl: String = "Resolving..."
+    val currentApiUrl: String = "Resolving...",
+    val cacheSizeBytes: Long = 0L,
+    val cacheSizeFormatted: String = "0 B"
 )
 

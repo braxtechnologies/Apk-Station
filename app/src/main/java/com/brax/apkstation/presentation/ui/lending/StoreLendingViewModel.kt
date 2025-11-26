@@ -35,6 +35,7 @@ import javax.inject.Inject
 class StoreLendingViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
     private val downloadHelper: DownloadHelper,
+    private val installerManager: com.brax.apkstation.data.installer.AppInstallerManager,
     private val appPreferencesRepository: AppPreferencesRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -145,15 +146,34 @@ class StoreLendingViewModel @Inject constructor(
         viewModelScope.launch {
             downloadHelper.downloadsList.collect { downloads ->
                 downloads.forEach { download ->
-                    val status = when (download.status) {
+                    when (download.status) {
                         DownloadStatus.QUEUED,
                         DownloadStatus.DOWNLOADING,
-                        DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
-                        DownloadStatus.INSTALLING -> AppStatus.INSTALLING
-                        else -> null
+                        DownloadStatus.DOWNLOADED,
+                        DownloadStatus.VERIFYING -> updateAppStatus(download.packageName, AppStatus.DOWNLOADING)
+                        
+                        DownloadStatus.INSTALLING -> updateAppStatus(download.packageName, AppStatus.INSTALLING)
+                        
+                        DownloadStatus.COMPLETED -> {
+                            // Download completed - refresh status from database/PackageManager
+                            viewModelScope.launch {
+                                val hasUpdate = apkRepository.getAppByPackageName(download.packageName)?.hasUpdate ?: false
+                                val status = getAppStatus(download.packageName, hasUpdate)
+                                updateAppStatus(download.packageName, status, hasUpdate)
+                            }
+                        }
+                        
+                        DownloadStatus.FAILED,
+                        DownloadStatus.CANCELLED,
+                        DownloadStatus.UNAVAILABLE -> {
+                            // Refresh status
+                            viewModelScope.launch {
+                                val hasUpdate = apkRepository.getAppByPackageName(download.packageName)?.hasUpdate ?: false
+                                val status = getAppStatus(download.packageName, hasUpdate)
+                                updateAppStatus(download.packageName, status, hasUpdate)
+                            }
+                        }
                     }
-                    
-                    status?.let { updateAppStatus(download.packageName, it) }
                 }
             }
         }
@@ -1069,6 +1089,32 @@ class StoreLendingViewModel @Inject constructor(
      */
     private fun installApp(app: AppItem) {
         viewModelScope.launch {
+            // First check if download is already completed and ready to install
+            val existingDownload = apkRepository.getDownload(app.packageName)
+            
+            if (existingDownload != null && existingDownload.status == DownloadStatus.COMPLETED) {
+                // Download already completed - trigger installation directly
+                // This guarantees app is in foreground (user just clicked button)
+                try {
+                    Log.i("StoreLendingViewModel", "Download already completed for ${app.packageName} - triggering installation")
+                    
+                    // Update download status to INSTALLING in database FIRST
+                    apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.INSTALLING)
+                    
+                    // Immediately update UI to show "Installing..."
+                    updateAppStatus(app.packageName, AppStatus.INSTALLING)
+                    
+                    // Trigger installation
+                    installerManager.getPreferredInstaller().install(existingDownload)
+                } catch (e: Exception) {
+                    Log.e("StoreLendingViewModel", "Failed to trigger installation for ${app.packageName}", e)
+                    _lendingUiState.update { it.copy(errorMessage = "Failed to install: ${e.message}") }
+                    apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.COMPLETED)
+                    updateAppStatus(app.packageName, AppStatus.NOT_INSTALLED)
+                }
+                return@launch
+            }
+            
             if (!_lendingUiState.value.isConnected) {
                 _lendingUiState.update { it.copy(errorMessage = "Network connection unavailable") }
                 return@launch
@@ -1369,6 +1415,13 @@ class StoreLendingViewModel @Inject constructor(
                 DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
 
                 DownloadStatus.INSTALLING -> AppStatus.INSTALLING
+                
+                DownloadStatus.COMPLETED -> {
+                    // Download completed and ready to install
+                    // Show Install button (file will be reused when user clicks)
+                    AppStatus.NOT_INSTALLED
+                }
+                
                 DownloadStatus.FAILED,
                 DownloadStatus.CANCELLED -> {
                     // Failed/cancelled downloads should be cleaned up

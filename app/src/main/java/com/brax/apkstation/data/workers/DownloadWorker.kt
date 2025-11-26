@@ -23,6 +23,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 
@@ -163,18 +164,34 @@ class DownloadWorker @AssistedInject constructor(
                     throw IOException("Download cancelled")
                 }
 
-                // Trigger installation using the new installer manager
-                storeDao.updateDownloadStatus(packageName, DownloadStatus.INSTALLING)
+                // Mark as COMPLETED first
+                storeDao.updateDownloadStatus(packageName, DownloadStatus.COMPLETED)
                 
-                // Get the download entity
-                val downloadEntity = storeDao.getDownload(packageName)
-                if (downloadEntity != null) {
-                    installerManager.getPreferredInstaller().install(downloadEntity)
-                    Log.i(TAG, "Triggered installation for $packageName")
+                // Check if app is in foreground
+                if (isAppInForeground()) {
+                    // App is in foreground - trigger installation immediately
+                    Log.i(TAG, "App in foreground - triggering installation for $packageName")
+                    val downloadEntity = storeDao.getDownload(packageName)
+                    if (downloadEntity != null) {
+                        try {
+                            // Update status to INSTALLING before triggering
+                            storeDao.updateDownloadStatus(packageName, DownloadStatus.INSTALLING)
+                            Log.i(TAG, "✅ Updated download status to INSTALLING for $packageName")
+                            
+                            // Trigger installation
+                            installerManager.getPreferredInstaller().install(downloadEntity)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to trigger installation", e)
+                            // Revert to COMPLETED on failure
+                            storeDao.updateDownloadStatus(packageName, DownloadStatus.COMPLETED)
+                        }
+                    }
                 } else {
-                    Log.e(TAG, "Download entity not found for $packageName after download completed")
+                    // App in background - let user click Install button later
+                    // File is already downloaded and will be reused
+                    Log.i(TAG, "App in background - install button will use downloaded file for $packageName")
                 }
-
+                
                 Result.success()
             } catch (e: Exception) {
                 Log.e(TAG, "Download failed for $packageName", e)
@@ -270,6 +287,25 @@ class DownloadWorker @AssistedInject constructor(
         val file = File(downloadDir, fileName)
         val tmpFile = File(file.absolutePath + ".tmp")
 
+        // Check if file already exists and is valid
+        if (file.exists()) {
+            val download = storeDao.getDownload(packageName)
+            val expectedMd5 = download?.md5
+            
+            if (expectedMd5 != null && verifyMd5(file, expectedMd5)) {
+                Log.i(TAG, "✅ File already downloaded and verified: ${file.name}")
+                return file
+            } else if (expectedMd5 == null) {
+                // No MD5 to verify against, assume file is good if it exists
+                Log.i(TAG, "✅ File already exists (no MD5 check): ${file.name}")
+                return file
+            } else {
+                // MD5 mismatch, delete and re-download
+                Log.i(TAG, "❌ Existing file failed MD5 check, re-downloading: ${file.name}")
+                file.delete()
+            }
+        }
+
         // Clean up any old tmp files
         downloadDir.listFiles { _, name -> name.endsWith(".tmp") }?.forEach { oldTmp ->
             Log.i(TAG, "Cleaning up old tmp file: ${oldTmp.name}")
@@ -279,22 +315,37 @@ class DownloadWorker @AssistedInject constructor(
         Log.i(TAG, "Downloading from: $url")
         Log.i(TAG, "Saving to: ${file.absolutePath}")
 
-        val request = Request.Builder()
-            .url(url)
-            .build()
+        // Check if we can resume a partial download
+        var resumeFromByte = 0L
+        if (tmpFile.exists() && tmpFile.length() > 0) {
+            resumeFromByte = tmpFile.length()
+            Log.i(TAG, "🔄 Resuming download from ${resumeFromByte / 1024 / 1024}MB")
+        }
 
-        okHttpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
+        val requestBuilder = Request.Builder().url(url)
+        
+        // Add HTTP Range header for resume support
+        if (resumeFromByte > 0) {
+            requestBuilder.header("Range", "bytes=$resumeFromByte-")
+        }
+
+        okHttpClient.newCall(requestBuilder.build()).execute().use { response ->
+            if (!response.isSuccessful && response.code != 206) { // 206 = Partial Content
                 throw IOException("Download failed: HTTP ${response.code}")
             }
 
             val body = response.body ?: throw IOException("Response body is null")
             val contentLength = body.contentLength()
+            val totalFileSize = if (response.code == 206) {
+                resumeFromByte + contentLength
+            } else {
+                contentLength
+            }
 
             body.byteStream().use { input ->
-                tmpFile.outputStream().use { output ->
+                FileOutputStream(tmpFile, resumeFromByte > 0).use { output -> // append mode if resuming
                     val buffer = ByteArray(8192)
-                    var totalBytes = 0L
+                    var totalBytes = resumeFromByte // Start from resume point
                     var bytes: Int
                     var checkCounter = 0 // For periodic DB checks
 
@@ -319,8 +370,8 @@ class DownloadWorker @AssistedInject constructor(
                         totalBytes += bytes
 
                         // Calculate and update progress
-                        val progress = if (contentLength > 0) {
-                            ((totalBytes * 100) / contentLength).toInt()
+                        val progress = if (totalFileSize > 0) {
+                            ((totalBytes * 100) / totalFileSize).toInt()
                         } else if (totalSize > 0) {
                             ((totalBytes * 100) / totalSize).toInt()
                         } else {
@@ -328,12 +379,12 @@ class DownloadWorker @AssistedInject constructor(
                         }
 
                         if (totalBytes % (512 * 1024) == 0L) { // Update every 512KB
-                            updateProgress(displayName, progress, totalBytes, contentLength)
+                            updateProgress(displayName, progress, totalBytes, totalFileSize)
                         }
                     }
 
                     // Final progress update
-                    updateProgress(displayName, 100, totalBytes, contentLength)
+                    updateProgress(displayName, 100, totalBytes, totalFileSize)
                 }
             }
         }
@@ -475,6 +526,19 @@ class DownloadWorker @AssistedInject constructor(
         } catch (e: Exception) {
             Log.e(TAG, "Failed to verify MD5", e)
             false
+        }
+    }
+
+    /**
+     * Check if app is currently in foreground
+     */
+    private fun isAppInForeground(): Boolean {
+        val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as android.app.ActivityManager
+        val runningProcesses = activityManager.runningAppProcesses ?: return false
+        
+        return runningProcesses.any { processInfo ->
+            processInfo.processName == context.packageName &&
+            processInfo.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND
         }
     }
 

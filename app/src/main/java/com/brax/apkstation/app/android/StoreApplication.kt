@@ -88,6 +88,9 @@ class StoreApplication : Application(), Configuration.Provider {
         // Schedule periodic update checks
         updateHelper.scheduleAutomatedCheck()
         
+        // Schedule periodic cache cleanup (every 6 hours, keeps files for 24 hours)
+        com.brax.apkstation.data.workers.CacheWorker.scheduleAutomatedCacheCleanup(this)
+        
         // Initialize app status helper to sync DB with installations/uninstallations
         appStatusHelper.init()
 

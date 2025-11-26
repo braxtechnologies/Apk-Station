@@ -23,7 +23,6 @@ import com.brax.apkstation.utils.formatFileSize
 import com.brax.apkstation.utils.preferences.AppPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +35,7 @@ import javax.inject.Inject
 class AppInfoViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
     private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
+    private val installerManager: com.brax.apkstation.data.installer.AppInstallerManager,
     appPreferencesRepository: AppPreferencesRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -159,23 +159,35 @@ class AppInfoViewModel @Inject constructor(
                 val download = downloads.find { it.packageName == currentPackageName }
                 
                 download?.let {
-                    val status = when (it.status) {
+                    when (it.status) {
                         DownloadStatus.QUEUED,
                         DownloadStatus.DOWNLOADING,
-                        DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
+                        DownloadStatus.DOWNLOADED,
+                        DownloadStatus.VERIFYING -> updateAppStatus(AppStatus.DOWNLOADING)
+                        
                         DownloadStatus.INSTALLING -> {
                             val hasUpdate = _uiState.value.appDetails?.hasUpdate ?: false
-                            if (hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING
+                            updateAppStatus(if (hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING)
                         }
+                        
+                        DownloadStatus.COMPLETED -> {
+                            // Download completed - show Install button
+                            val hasUpdate = _uiState.value.appDetails?.hasUpdate ?: false
+                            val isInstalled = getInstalledVersionInfo(currentPackageName) != null
+                            updateAppStatus(
+                                if (isInstalled && hasUpdate) AppStatus.UPDATE_AVAILABLE
+                                else if (isInstalled) AppStatus.INSTALLED
+                                else AppStatus.NOT_INSTALLED
+                            )
+                        }
+                        
                         DownloadStatus.FAILED,
-                        DownloadStatus.CANCELLED -> {
-                            // Handled by dedicated error handling
-                            return@let
+                        DownloadStatus.CANCELLED,
+                        DownloadStatus.UNAVAILABLE -> {
+                            // Refresh to check actual status
+                            loadAppDetails(_uiState.value.appDetails?.uuid ?: "")
                         }
-                        else -> return@let
                     }
-                    
-                    updateAppStatus(status)
                 }
             }
         }
@@ -264,6 +276,7 @@ class AppInfoViewModel @Inject constructor(
 
                         // Get actual app status (check downloads and installation)
                         val actualStatus = getActualAppStatus(details.packageName, hasUpdate)
+                        Log.i("AppInfoViewModel", "📊 loadAppDetails for ${details.packageName} - actualStatus: $actualStatus")
 
                         val appDetailsData = AppDetailsData(
                             uuid = details.uuid,
@@ -361,6 +374,43 @@ class AppInfoViewModel @Inject constructor(
     fun installApp() {
         viewModelScope.launch {
             _uiState.value.appDetails?.let { app ->
+                Log.i("AppInfoViewModel", "🚀 installApp() called for ${app.packageName}")
+                
+                // First check if download is already completed and ready to install
+                val existingDownload = apkRepository.getDownload(app.packageName)
+                Log.i("AppInfoViewModel", "📦 Existing download status: ${existingDownload?.status}")
+                
+                if (existingDownload != null && existingDownload.status == com.brax.apkstation.data.model.DownloadStatus.COMPLETED) {
+                    Log.i("AppInfoViewModel", "✓ Entering COMPLETED download path")
+                    // Download already completed - trigger installation directly
+                    // This guarantees app is in foreground (user just clicked button)
+                    try {
+                        Log.i("AppInfoViewModel", "Download already completed for ${app.packageName} - triggering installation")
+                        
+                        // Update download status to INSTALLING in database - this is awaited
+                        apkRepository.updateDownloadStatus(app.packageName, com.brax.apkstation.data.model.DownloadStatus.INSTALLING)
+                        Log.i("AppInfoViewModel", "✅ Database updated to INSTALLING for ${app.packageName}")
+                        
+                        // Verify it was updated
+                        val updatedDownload = apkRepository.getDownload(app.packageName)
+                        Log.i("AppInfoViewModel", "📊 Verified download status: ${updatedDownload?.status}")
+                        
+                        // Immediately update UI to show "Installing..."
+                        val hasUpdate = app.hasUpdate
+                        updateAppStatus(if (hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING)
+                        Log.i("AppInfoViewModel", "✅ UI updated to INSTALLING for ${app.packageName}")
+                        
+                        // Trigger installation with updated download object
+                        installerManager.getPreferredInstaller().install(updatedDownload ?: existingDownload)
+                    } catch (e: Exception) {
+                        Log.e("AppInfoViewModel", "Failed to trigger installation for ${app.packageName}", e)
+                        _uiState.update { it.copy(errorMessage = "Failed to install: ${e.message}") }
+                        apkRepository.updateDownloadStatus(app.packageName, com.brax.apkstation.data.model.DownloadStatus.COMPLETED)
+                        updateAppStatus(AppStatus.NOT_INSTALLED)
+                    }
+                    return@launch
+                }
+                
                 if (!_uiState.value.isConnected) {
                     _uiState.update { it.copy(errorMessage = "Network connection unavailable") }
                     return@launch
@@ -764,6 +814,7 @@ class AppInfoViewModel @Inject constructor(
 
         // Check for active downloads first (even if app is installed - could be an update)
         val download = apkRepository.getDownload(packageName)
+        Log.i("AppInfoViewModel", "🔍 getActualAppStatus for $packageName - download: ${download?.status}")
         if (download != null) {
             return when (download.status) {
                 DownloadStatus.QUEUED,
@@ -772,6 +823,17 @@ class AppInfoViewModel @Inject constructor(
                 DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
 
                 DownloadStatus.INSTALLING -> if (hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING
+                
+                DownloadStatus.COMPLETED -> {
+                    // Download completed and ready to install
+                    // Show Install button (file will be reused when user clicks)
+                    if (isInstalled) {
+                        if (hasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
+                    } else {
+                        AppStatus.NOT_INSTALLED
+                    }
+                }
+                
                 DownloadStatus.FAILED,
                 DownloadStatus.CANCELLED -> {
                     // Failed/cancelled downloads should be cleaned up
