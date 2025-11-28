@@ -1285,7 +1285,8 @@ class StoreLendingViewModel @Inject constructor(
 
             Log.d(
                 "StoreLendingViewModel",
-                "UI State after update: isConnected=${_lendingUiState.value.isConnected}, showNetworkAlert=${_lendingUiState.value.showNetworkAlert}"
+                "UI State after update: isConnected=${_lendingUiState.value.isConnected}, " +
+                        "showNetworkAlert=${_lendingUiState.value.showNetworkAlert}"
             )
 
             // Auto-reload content when connection is restored (was disconnected, now connected)

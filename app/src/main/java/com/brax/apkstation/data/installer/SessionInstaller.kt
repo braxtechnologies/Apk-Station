@@ -17,6 +17,7 @@ import com.brax.apkstation.data.installer.base.InstallerBase
 import com.brax.apkstation.data.model.SessionInfo
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.data.room.entity.Download
+import com.brax.apkstation.utils.CommonUtils.TAG
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,15 +29,12 @@ import javax.inject.Singleton
 
 /**
  * Installer using Android's PackageInstaller API
- * Works on Android 5.0+ (API 21+)
  */
 @Singleton
 class SessionInstaller @Inject constructor(
     @ApplicationContext context: Context
 ) : InstallerBase(context)  {
 
-    private val TAG = SessionInstaller::class.java.simpleName
-    
     val currentSessionId: Int?
         get() = enqueuedSessions.firstOrNull()?.lastOrNull()?.sessionId
 

@@ -7,6 +7,7 @@ import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.event.InstallerEvent
 import com.brax.apkstation.data.room.dao.StoreDao
 import com.brax.apkstation.presentation.ui.lending.AppStatus
+import com.brax.apkstation.utils.CommonUtils.TAG
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -23,8 +24,6 @@ class AppStatusHelper @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val storeDao: StoreDao
 ) {
-
-    private val TAG = AppStatusHelper::class.java.simpleName
 
     fun init() {
         observeInstallerEvents()

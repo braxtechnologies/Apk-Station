@@ -12,6 +12,7 @@ import com.brax.apkstation.R
 import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.event.InstallerEvent
 import com.brax.apkstation.data.room.entity.Download
+import com.brax.apkstation.utils.CommonUtils.TAG
 import com.brax.apkstation.utils.NotificationHelper
 import java.io.File
 
@@ -29,8 +30,7 @@ abstract class InstallerBase(protected val context: Context) : IInstaller {
             val notificationManager = context.getSystemService<NotificationManager>()
             val notification = NotificationHelper.createInstallSuccessNotification(
                 context,
-                displayName,
-                packageName
+                displayName
             )
             notificationManager?.notify(packageName.hashCode(), notification)
         }
@@ -56,8 +56,6 @@ abstract class InstallerBase(protected val context: Context) : IInstaller {
             }
         }
     }
-
-    private val TAG = InstallerBase::class.java.simpleName
 
     var download: Download? = null
         protected set

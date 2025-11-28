@@ -1,5 +1,6 @@
 package com.brax.apkstation.utils
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -188,9 +189,8 @@ object NotificationHelper {
      */
     fun createInstallSuccessNotification(
         context: Context,
-        appName: String,
-        packageName: String
-    ): android.app.Notification {
+        appName: String
+    ): Notification {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }

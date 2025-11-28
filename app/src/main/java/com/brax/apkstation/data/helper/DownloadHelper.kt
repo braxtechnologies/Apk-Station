@@ -49,8 +49,6 @@ class DownloadHelper @Inject constructor(
     val downloadsList get() = downloadDao.getAllDownloads()
         .stateIn(StoreApplication.scope, SharingStarted.WhileSubscribed(), emptyList())
 
-    private val TAG = DownloadHelper::class.java.simpleName
-
     /**
      * Initialize the helper - removes failed downloads and starts observing
      */

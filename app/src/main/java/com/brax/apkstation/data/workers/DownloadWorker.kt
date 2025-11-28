@@ -16,6 +16,7 @@ import com.brax.apkstation.data.installer.AppInstallerManager
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.room.dao.StoreDao
 import com.brax.apkstation.data.room.entity.Download
+import com.brax.apkstation.utils.CommonUtils.TAG
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
@@ -41,7 +42,6 @@ class DownloadWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, workerParams) {
 
     private val notificationManager = context.getSystemService<NotificationManager>()!!
-    private val TAG = "DownloadWorker"
     private val NOTIFICATION_ID = 100
     private val CHANNEL_ID = "download_channel"
 

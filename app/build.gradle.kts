@@ -12,6 +12,7 @@ plugins {
     alias(libs.plugins.orgJlleitschuhGradleKtlint)
     alias(libs.plugins.comGoogleDevtoolsKsp)
     alias(libs.plugins.comGoogleDaggerHiltAndroid)
+    alias(libs.plugins.detekt)
 }
 
 // Load secrets from secrets.properties file
@@ -82,6 +83,12 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    detekt {
+        buildUponDefaultConfig = true
+
+        config.setFrom("detektRules.yml")
     }
 }
 

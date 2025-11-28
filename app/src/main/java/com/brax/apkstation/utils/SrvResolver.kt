@@ -58,7 +58,9 @@ object SrvResolver {
                     "https://${bestRecord.target}:${bestRecord.port}/apk/v2/"
                 }
                 
-                Log.i(TAG, "✅ Resolved API URL via SRV: $resolvedUrl (priority: ${bestRecord.priority}, weight: ${bestRecord.weight})")
+                Log.i(TAG, "✅ Resolved API URL via SRV: " +
+                        "$resolvedUrl (priority: ${bestRecord.priority}," +
+                        " weight: ${bestRecord.weight})")
                 
                 cachedApiUrl = resolvedUrl
                 return@withContext resolvedUrl
@@ -106,7 +108,10 @@ object SrvResolver {
                             target = record.target.toString().trimEnd('.') // Remove trailing dot
                         )
                         records.add(srvData)
-                        Log.d(TAG, "Found SRV record: priority=${srvData.priority}, weight=${srvData.weight}, port=${srvData.port}, target=${srvData.target}")
+                        Log.d(TAG, "Found SRV record: priority=${srvData.priority}, " +
+                                "weight=${srvData.weight}," +
+                                " port=${srvData.port}, " +
+                                "target=${srvData.target}")
                     } else {
                         Log.w(TAG, "Unexpected record type: ${record?.javaClass?.simpleName}")
                     }
