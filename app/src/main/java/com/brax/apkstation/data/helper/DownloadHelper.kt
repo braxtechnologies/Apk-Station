@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -46,8 +47,9 @@ class DownloadHelper @Inject constructor(
     /**
      * Flow of all downloads
      */
-    val downloadsList get() = downloadDao.getAllDownloads()
-        .stateIn(StoreApplication.scope, SharingStarted.WhileSubscribed(), emptyList())
+    val downloadsList
+        get() = downloadDao.getAllDownloads()
+            .stateIn(StoreApplication.scope, SharingStarted.WhileSubscribed(), emptyList())
 
     /**
      * Initialize the helper - removes failed downloads and starts observing
@@ -67,12 +69,12 @@ class DownloadHelper @Inject constructor(
         downloadDao.getAllDownloads().onEach { list ->
             try {
                 // Check if any download is currently running
-                val hasRunningDownload = list.any { 
-                    it.status == DownloadStatus.DOWNLOADING || 
-                    it.status == DownloadStatus.VERIFYING ||
-                    it.status == DownloadStatus.INSTALLING
+                val hasRunningDownload = list.any {
+                    it.status == DownloadStatus.DOWNLOADING ||
+                            it.status == DownloadStatus.VERIFYING ||
+                            it.status == DownloadStatus.INSTALLING
                 }
-                
+
                 if (!hasRunningDownload) {
                     // Find next queued download
                     list.find { it.status == DownloadStatus.QUEUED }?.let { queuedDownload ->
@@ -101,13 +103,13 @@ class DownloadHelper @Inject constructor(
      */
     suspend fun cancel(packageName: String) {
         Log.i(TAG, "Cancelling download for $packageName")
-        
+
         // Cancel the work
         workManager.cancelAllWorkByTag("$DOWNLOAD_WORKER/$packageName")
-        
+
         // Delete the download entry from database
         downloadDao.deleteDownload(packageName)
-        
+
         // Check if app should be removed from applications table
         val app = downloadDao.findApplicationByPackageName(packageName)
         if (app != null) {
@@ -115,25 +117,21 @@ class DownloadHelper @Inject constructor(
             val isInstalled = try {
                 context.packageManager.getPackageInfo(packageName, 0)
                 true
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 false
             }
-            
+
             // Only delete if NOT installed and NOT favorited
             if (!isInstalled && !app.isFavorite) {
                 downloadDao.deleteApplication(packageName)
-                Log.i(TAG, "Removed app $packageName from applications database")
-            } else {
-                Log.i(TAG, "Kept app $packageName in database (installed: $isInstalled, favorite: ${app.isFavorite})")
             }
         }
-        
+
         // Delete downloaded files if any
         try {
-            val downloadDir = java.io.File(context.filesDir, "downloads/$packageName")
+            val downloadDir = File(context.filesDir, "downloads/$packageName")
             if (downloadDir.exists()) {
                 downloadDir.deleteRecursively()
-                Log.i(TAG, "Deleted download files for $packageName")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete download files for $packageName", e)
@@ -163,14 +161,15 @@ class DownloadHelper @Inject constructor(
     private suspend fun cancelFailedDownloads(downloadList: List<Download>) {
         val workManager = WorkManager.getInstance(context)
 
-        downloadList.filter { 
-            it.status == DownloadStatus.DOWNLOADING || 
-            it.status == DownloadStatus.VERIFYING
+        downloadList.filter {
+            it.status == DownloadStatus.DOWNLOADING ||
+                    it.status == DownloadStatus.VERIFYING
         }.forEach { download ->
             // Check if the worker has actually finished
-            val workInfos = workManager.getWorkInfosByTagFlow("$PACKAGE_NAME:${download.packageName}")
-                .firstOrNull()
-            
+            val workInfos =
+                workManager.getWorkInfosByTagFlow("$PACKAGE_NAME:${download.packageName}")
+                    .firstOrNull()
+
             val allFinished = workInfos?.all { it.state.isFinished } ?: true
             if (allFinished) {
                 Log.w(TAG, "Download ${download.packageName} was stuck, marking as failed")
@@ -202,72 +201,65 @@ class DownloadHelper @Inject constructor(
                 ExistingWorkPolicy.KEEP,
                 work
             )
-            
-        Log.i(TAG, "Triggered download worker for ${download.packageName}")
     }
-    
+
     /**
      * Clear download entry and files for a specific package
      */
     suspend fun clearDownload(packageName: String) {
-        Log.i(TAG, "Clearing download for $packageName")
-        
         // Cancel work for this package
         workManager.cancelAllWorkByTag("$DOWNLOAD_WORKER/$packageName")
-        
+
         // Delete from database
         downloadDao.deleteDownload(packageName)
-        
+
         // Delete files
         try {
-            val downloadDir = java.io.File(context.filesDir, "downloads/$packageName")
+            val downloadDir = File(context.filesDir, "downloads/$packageName")
             if (downloadDir.exists()) {
                 downloadDir.deleteRecursively()
-                Log.i(TAG, "Deleted download files for $packageName")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete download files for $packageName", e)
         }
     }
-    
+
     /**
      * Clear all completed downloads
      */
     suspend fun clearCompletedDownloads() {
         Log.i(TAG, "Clearing all completed downloads")
-        
+
         val downloads = downloadDao.getAllDownloadsList()
-        downloads.filter { 
+        downloads.filter {
             it.status == DownloadStatus.COMPLETED ||
-            it.status == DownloadStatus.FAILED ||
-            it.status == DownloadStatus.CANCELLED
+                    it.status == DownloadStatus.FAILED ||
+                    it.status == DownloadStatus.CANCELLED
         }.forEach { download ->
             clearDownload(download.packageName)
         }
     }
-    
+
     /**
      * Clear all downloads and their files
      */
-    suspend fun clearAllDownloads() {
+    fun clearAllDownloads() {
         Log.i(TAG, "Clearing all downloads")
-        
+
         // Cancel all ongoing work
         workManager.cancelAllWorkByTag(DOWNLOAD_WORKER)
-        
+
         // Delete all from database
         downloadDao.deleteAllDownloads()
-        
+
         // Delete all files
         try {
-            val downloadDir = java.io.File(context.filesDir, "downloads")
+            val downloadDir = File(context.filesDir, "downloads")
             if (downloadDir.exists()) {
                 downloadDir.deleteRecursively()
-                Log.i(TAG, "Deleted all download files")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to delete download files", e)
         }
     }
 }
-

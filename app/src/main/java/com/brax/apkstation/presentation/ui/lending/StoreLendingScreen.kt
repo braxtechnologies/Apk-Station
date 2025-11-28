@@ -1,19 +1,10 @@
 package com.brax.apkstation.presentation.ui.lending
 
 import android.app.Activity
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.net.ConnectivityManager
-import android.net.Network
-import android.net.NetworkCapabilities
-import android.net.NetworkRequest
-import android.os.Build
-import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -49,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
@@ -57,7 +49,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.brax.apkstation.R
-import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.presentation.ui.lending.components.AppListItem
 import com.brax.apkstation.presentation.ui.lending.components.CategoriesListScreen
 import com.brax.apkstation.presentation.ui.lending.components.CategoryItem
@@ -101,120 +92,6 @@ fun StoreLendingScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-        }
-    }
-
-    // Listen for installation status changes
-    DisposableEffect("installation_receiver") {
-        val installReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                val packageName = intent?.getStringExtra(
-                    InstallStatusReceiver.EXTRA_PACKAGE_NAME
-                )
-                if (packageName != null) {
-                    viewModel.refreshAppStatus(packageName)
-                }
-            }
-        }
-
-        val installFilter = IntentFilter(
-            InstallStatusReceiver.ACTION_INSTALLATION_STATUS_CHANGED
-        )
-        context.registerReceiver(installReceiver, installFilter, Context.RECEIVER_NOT_EXPORTED)
-
-        onDispose {
-            context.unregisterReceiver(installReceiver)
-        }
-    }
-
-    // Network connectivity monitoring
-    DisposableEffect("network_monitor") {
-        val connectivityManager =
-            context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-
-        // Check initial connectivity state immediately
-        val initialNetwork = connectivityManager.activeNetwork
-        val initialCapabilities = connectivityManager.getNetworkCapabilities(initialNetwork)
-        val isInitiallyConnected = initialCapabilities?.let {
-            it.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                    it.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-        } ?: false
-        viewModel.updateConnectivityStatus(isInitiallyConnected)
-
-        val networkRequest = NetworkRequest.Builder()
-            .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .addTransportType(NetworkCapabilities.TRANSPORT_CELLULAR)
-            .build()
-
-        val networkCallback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) {
-                super.onAvailable(network)
-                viewModel.updateConnectivityStatus(true)
-            }
-
-            override fun onLost(network: Network) {
-                super.onLost(network)
-                viewModel.updateConnectivityStatus(false)
-            }
-
-            override fun onCapabilitiesChanged(
-                network: Network,
-                networkCapabilities: NetworkCapabilities
-            ) {
-                super.onCapabilitiesChanged(network, networkCapabilities)
-                val hasConnection =
-                    networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                            networkCapabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-
-                viewModel.updateConnectivityStatus(hasConnection)
-            }
-        }
-
-        connectivityManager.requestNetwork(networkRequest, networkCallback)
-
-        onDispose {
-            try {
-                connectivityManager.unregisterNetworkCallback(networkCallback)
-            } catch (_: Exception) {
-            }
-        }
-    }
-
-    // Package installation/removal broadcast receiver
-    DisposableEffect(Unit) {
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                val packageName = intent.data?.encodedSchemeSpecificPart
-                packageName?.let {
-                    when (intent.action) {
-                        Intent.ACTION_PACKAGE_ADDED -> {
-                            viewModel.updateAppInDb(packageName, AppStatus.INSTALLED)
-                        }
-
-                        Intent.ACTION_PACKAGE_REMOVED -> {
-                            viewModel.updateAppInDb(packageName, AppStatus.NOT_INSTALLED)
-                        }
-                    }
-                }
-            }
-        }
-
-        val filter = IntentFilter().apply {
-            addAction(Intent.ACTION_PACKAGE_ADDED)
-            addAction(Intent.ACTION_PACKAGE_REMOVED)
-            addDataScheme("package")
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            context.registerReceiver(receiver, filter)
-        }
-
-        onDispose {
-            context.unregisterReceiver(receiver)
         }
     }
 
@@ -294,13 +171,9 @@ fun StoreLendingScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // Network alert banner - shows when there's no connection
-                // Always show after tabs (or at top if in search/favorites mode) when network is unavailable
-                Log.d("StoreLendingScreen", "Rendering banner: isConnected=${uiState.isConnected}, showNetworkAlert=${uiState.showNetworkAlert}")
                 NetworkAlertBanner(
                     isVisible = !uiState.isConnected,
-                    onRetry = { viewModel.retryConnection() },
-                    onDismiss = { viewModel.dismissNetworkAlert() }
+                    onRetry = { viewModel.retryConnection() }
                 )
 
                 // Content area with pull to refresh
@@ -373,74 +246,7 @@ fun StoreLendingScreen(
 
                         else -> {
                             // Show categories list or app list depending on mode
-                            if (uiState.isCategoriesListMode) {
-                                CategoriesListScreen(
-                                    categories = uiState.availableCategories.map {
-                                        CategoryItem(
-                                            key = it.key,
-                                            name = it.name,
-                                            count = it.count
-                                        )
-                                    },
-                                    isLoading = uiState.isLoadingCategories,
-                                    onCategoryClick = { categoryKey ->
-                                        // Find the category name
-                                        val categoryName = uiState.availableCategories
-                                            .find { it.key == categoryKey }?.name ?: categoryKey
-                                        navigationActions.navigateToCategoryApps(categoryKey, categoryName)
-                                    }
-                                )
-                            } else {
-                                // App list only - tabs are outside this section
-                                val isBraxPicksSection = uiState.selectedSection == SectionTab.BRAX_PICKS.queryName
-                                        && !uiState.isSearchMode
-                                        && !uiState.isFavoritesMode
-                                val featuredApps = if (isBraxPicksSection) uiState.apps.take(5) else emptyList()
-                                val remainingApps = if (isBraxPicksSection && uiState.apps.size > 5) {
-                                    uiState.apps.drop(5)
-                                } else if (!isBraxPicksSection) {
-                                    uiState.apps
-                                } else {
-                                    emptyList()
-                                }
-                                
-                                LazyColumn(
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentPadding = PaddingValues(bottom = 8.dp)
-                                ) {
-                                    // Featured carousel for BRAX picks section
-                                    if (featuredApps.isNotEmpty()) {
-                                        item {
-                                            FeaturedCarousel(
-                                                featuredApps = featuredApps,
-                                                onAppClick = { app ->
-                                                    val identifier =
-                                                        if (!app.uuid.isNullOrBlank()) app.uuid else app.packageName
-                                                    navigationActions.navigateToAppInfo(identifier)
-                                                },
-                                                onActionClick = { app ->
-                                                    viewModel.onAppActionButtonClick(app)
-                                                },
-                                                modifier = Modifier.padding(vertical = 16.dp)
-                                            )
-                                        }
-                                    }
-                                    
-                                    items(remainingApps, key = { it.packageName }) { app ->
-                                        AppListItem(
-                                            app = app,
-                                            isConnected = uiState.isConnected,
-                                            onAppClick = {
-                                                // Use UUID if available, otherwise use package name
-                                                val identifier =
-                                                    if (!app.uuid.isNullOrBlank()) app.uuid else app.packageName
-                                                navigationActions.navigateToAppInfo(identifier)
-                                            },
-                                            onActionClick = { viewModel.onAppActionButtonClick(app) }
-                                        )
-                                    }
-                                }
-                            }
+                            OnSuccessScreen(uiState, navigationActions, viewModel)
                         }
                     }
                 }
@@ -448,31 +254,117 @@ fun StoreLendingScreen(
 
             // Search suggestions dropdown overlay (direct child of Box for proper alignment)
             if (uiState.isSearchMode && uiState.searchSuggestions.isNotEmpty() && uiState.apps.isEmpty()) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = paddingValues.calculateTopPadding())
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
-                        .align(Alignment.TopCenter),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
+                SuggestionDropDownOverlay(paddingValues, uiState, viewModel, keyboardController)
+            }
+        }
+    }
+}
+
+@Composable
+private fun OnSuccessScreen(
+    uiState: LendingViewState,
+    navigationActions: AppNavigationActions,
+    viewModel: StoreLendingViewModel
+) {
+    if (uiState.isCategoriesListMode) {
+        CategoriesListScreen(
+            categories = uiState.availableCategories.map {
+                CategoryItem(
+                    key = it.key,
+                    name = it.name,
+                    count = it.count
+                )
+            },
+            isLoading = uiState.isLoadingCategories,
+            onCategoryClick = { categoryKey ->
+                // Find the category name
+                val categoryName = uiState.availableCategories
+                    .find { it.key == categoryKey }?.name ?: categoryKey
+                navigationActions.navigateToCategoryApps(categoryKey, categoryName)
+            }
+        )
+    } else {
+        // App list only - tabs are outside this section
+        val isBraxPicksSection = uiState.selectedSection == SectionTab.BRAX_PICKS.queryName
+                && !uiState.isSearchMode
+                && !uiState.isFavoritesMode
+        val featuredApps = if (isBraxPicksSection) uiState.apps.take(5) else emptyList()
+        val remainingApps = if (isBraxPicksSection && uiState.apps.size > 5) {
+            uiState.apps.drop(5)
+        } else if (!isBraxPicksSection) {
+            uiState.apps
+        } else {
+            emptyList()
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(bottom = 8.dp)
+        ) {
+            // Featured carousel for BRAX picks section
+            if (featuredApps.isNotEmpty()) {
+                item {
+                    FeaturedCarousel(
+                        featuredApps = featuredApps,
+                        onAppClick = { app ->
+                            val identifier =
+                                if (!app.uuid.isNullOrBlank()) app.uuid else app.packageName
+                            navigationActions.navigateToAppInfo(identifier)
+                        },
+                        onActionClick = { app ->
+                            viewModel.onAppActionButtonClick(app)
+                        },
+                        modifier = Modifier.padding(vertical = 16.dp)
                     )
-                ) {
-                    Column {
-                        uiState.searchSuggestions.forEachIndexed { index, suggestion ->
-                            SuggestionItem(
-                                suggestion = suggestion,
-                                onClick = {
-                                    viewModel.executeSearch(suggestion)
-                                    keyboardController?.hide()
-                                }
-                            )
-                            if (index < uiState.searchSuggestions.size - 1) {
-                                HorizontalDivider()
-                            }
-                        }
+                }
+            }
+
+            items(remainingApps, key = { it.packageName }) { app ->
+                AppListItem(
+                    app = app,
+                    isConnected = uiState.isConnected,
+                    onAppClick = {
+                        // Use UUID if available, otherwise use package name
+                        val identifier =
+                            if (!app.uuid.isNullOrBlank()) app.uuid else app.packageName
+                        navigationActions.navigateToAppInfo(identifier)
+                    },
+                    onActionClick = { viewModel.onAppActionButtonClick(app) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BoxScope.SuggestionDropDownOverlay(
+    paddingValues: PaddingValues,
+    uiState: LendingViewState,
+    viewModel: StoreLendingViewModel,
+    keyboardController: SoftwareKeyboardController?
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = paddingValues.calculateTopPadding())
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+            .align(Alignment.TopCenter),
+        elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column {
+            uiState.searchSuggestions.forEachIndexed { index, suggestion ->
+                SuggestionItem(
+                    suggestion = suggestion,
+                    onClick = {
+                        viewModel.executeSearch(suggestion)
+                        keyboardController?.hide()
                     }
+                )
+                if (index < uiState.searchSuggestions.size - 1) {
+                    HorizontalDivider()
                 }
             }
         }

@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import com.brax.apkstation.BuildConfig
 
+@Suppress("MaxLineLength")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -165,6 +166,58 @@ fun SettingsScreen(
                     checked = uiState.notificationsEnabled,
                     onCheckedChange = { viewModel.onNotificationToggleChanged(it) }
                 )
+            }
+            
+            // Auto-Update Section
+            SettingsSection(title = "Auto-Update") {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Enable auto-update check
+                    SettingsSwitchItemInline(
+                        icon = Icons.Default.Update,
+                        title = "Auto-check for updates",
+                        description = "Automatically check for app updates periodically",
+                        checked = uiState.autoUpdateCheckEnabled,
+                        onCheckedChange = { viewModel.onAutoUpdateCheckToggled(it) }
+                    )
+                    
+                    HorizontalDivider()
+                    
+                    // WiFi only
+                    SettingsSwitchItemInline(
+                        icon = Icons.Default.Cloud,
+                        title = "WiFi only",
+                        description = "Only check for updates when connected to WiFi",
+                        checked = uiState.updateOnlyWifi,
+                        onCheckedChange = { viewModel.onUpdateOnlyWifiToggled(it) },
+                        enabled = uiState.autoUpdateCheckEnabled
+                    )
+                    
+                    HorizontalDivider()
+                    
+                    // Battery not low
+                    SettingsSwitchItemInline(
+                        icon = Icons.Default.Refresh,
+                        title = "Battery not low",
+                        description = "Only check when battery is not low",
+                        checked = uiState.updateBatteryNotLow,
+                        onCheckedChange = { viewModel.onUpdateBatteryNotLowToggled(it) },
+                        enabled = uiState.autoUpdateCheckEnabled
+                    )
+                    
+                    HorizontalDivider()
+                    
+                    // Update check interval info
+                    Text(
+                        text = "Update checks run every ${uiState.updateCheckIntervalHours} hours when enabled",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
 
             // Storage Section
@@ -411,6 +464,54 @@ private fun SettingsSwitchItem(
         Switch(
             checked = checked,
             onCheckedChange = onCheckedChange
+        )
+    }
+}
+
+@Suppress("MaxLineLength")
+@Composable
+private fun SettingsSwitchItemInline(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    enabled: Boolean = true
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier.weight(1f),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+            Column(
+                modifier = Modifier.weight(1f)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                )
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                )
+            }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
         )
     }
 }

@@ -116,7 +116,7 @@ class CategoryAppsViewModel @Inject constructor(
                         val isInstalled = try {
                             context.packageManager.getPackageInfo(displayedApp.packageName, 0)
                             true
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             false
                         }
                         val status = if (isInstalled) AppStatus.INSTALLED else AppStatus.NOT_INSTALLED

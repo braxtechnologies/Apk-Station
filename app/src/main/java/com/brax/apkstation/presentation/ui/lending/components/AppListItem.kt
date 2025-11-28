@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -57,146 +58,165 @@ fun AppListItem(
             verticalAlignment = Alignment.CenterVertically
         ) {
             // App icon
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant),
-                contentAlignment = Alignment.Center
-            ) {
-                if (app.icon != null) {
-                    AsyncImage(
-                        model = app.icon,
-                        contentDescription = app.name,
-                        modifier = Modifier.size(56.dp)
-                    )
-                } else if (app.iconDrawable != null) {
-                    AsyncImage(
-                        model = app.iconDrawable,
-                        contentDescription = app.name,
-                        modifier = Modifier.size(56.dp)
-                    )
-                }
-            }
+            AppIcon(app)
 
             Spacer(modifier = Modifier.width(12.dp))
 
             // App info
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = app.name.ifBlank { "-" },
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                val appInfoTextResId = when (app.status) {
-                    AppStatus.INSTALLED -> R.string.app_installed
-                    AppStatus.UPDATE_AVAILABLE -> R.string.update_available
-                    AppStatus.UNAVAILABLE -> R.string.unavailable
-                    AppStatus.DOWNLOADING -> R.string.downloading
-                    AppStatus.INSTALLING -> R.string.installing
-                    AppStatus.UPDATING -> R.string.updating
-                    AppStatus.UNINSTALLING -> R.string.uninstalling
-
-                    // NOT_INSTALLED is handled differently
-                    else -> 0
-                }
-
-                val textColor = when (app.status) {
-                    AppStatus.INSTALLED -> MaterialTheme.colorScheme.primary
-                    AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
-                    AppStatus.UNAVAILABLE -> MaterialTheme.colorScheme.error
-                    AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.tertiary
-                    AppStatus.INSTALLING -> MaterialTheme.colorScheme.tertiary
-                    AppStatus.UPDATING -> Color(0xFFFF9800) // Orange
-                    AppStatus.UNINSTALLING -> MaterialTheme.colorScheme.tertiary
-
-                    else -> MaterialTheme.colorScheme.onSurfaceVariant
-                }
-
-                when (app.status) {
-                    AppStatus.NOT_INSTALLED -> {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        app.author?.let {
-                            Text(
-                                text = it,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1
-                            )
-                        }
-                        Spacer(modifier = Modifier.height(2.dp))
-
-                        // Build info string with | separator
-                        val infoItems = buildList {
-                            app.version?.takeIf { it.isNotEmpty() }?.let { add("v$it") }
-                            app.size?.takeIf { it.isNotEmpty() }?.let { add(it) }
-                            app.rating?.takeIf { it.isNotEmpty() }?.let { add("★ $it") }
-                        }
-
-                        if (infoItems.isNotEmpty()) {
-                            Text(
-                                text = infoItems.joinToString(" | "),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    else -> {
-                        Text(
-                            text = stringResource(appInfoTextResId),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = textColor
-                        )
-                    }
-                }
-            }
+            AppInfo(app)
 
             Spacer(modifier = Modifier.width(12.dp))
 
             // Action button (fixed width for consistency)
             // Don't show button for UNAVAILABLE - status text is enough
-            if (app.status != AppStatus.UNAVAILABLE) {
-                val buttonTextResId = when (app.status) {
-                    AppStatus.INSTALLED -> R.string.open
-                    AppStatus.UPDATE_AVAILABLE -> R.string.update
-                    AppStatus.NOT_INSTALLED -> R.string.install
-                    AppStatus.DOWNLOADING -> R.string.action_cancel
+            ActionButton(app, isConnected, onActionClick)
+        }
+    }
+}
 
-                    else -> 0
+@Composable
+private fun AppIcon(app: AppItem) {
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant),
+        contentAlignment = Alignment.Center
+    ) {
+        if (app.icon != null) {
+            AsyncImage(
+                model = app.icon,
+                contentDescription = app.name,
+                modifier = Modifier.size(56.dp)
+            )
+        } else if (app.iconDrawable != null) {
+            AsyncImage(
+                model = app.iconDrawable,
+                contentDescription = app.name,
+                modifier = Modifier.size(56.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun RowScope.AppInfo(app: AppItem) {
+    Column(
+        modifier = Modifier.weight(1f)
+    ) {
+        Text(
+            text = app.name.ifBlank { "-" },
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+
+        val appInfoTextResId = when (app.status) {
+            AppStatus.INSTALLED -> R.string.app_installed
+            AppStatus.UPDATE_AVAILABLE -> R.string.update_available
+            AppStatus.UNAVAILABLE -> R.string.unavailable
+            AppStatus.DOWNLOADING -> R.string.downloading
+            AppStatus.INSTALLING -> R.string.installing
+            AppStatus.UPDATING -> R.string.updating
+            AppStatus.UNINSTALLING -> R.string.uninstalling
+
+            // NOT_INSTALLED is handled differently
+            else -> 0
+        }
+
+        val textColor = when (app.status) {
+            AppStatus.INSTALLED -> MaterialTheme.colorScheme.primary
+            AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
+            AppStatus.UNAVAILABLE -> MaterialTheme.colorScheme.error
+            AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.tertiary
+            AppStatus.INSTALLING -> MaterialTheme.colorScheme.tertiary
+            AppStatus.UPDATING -> Color(0xFFFF9800) // Orange
+            AppStatus.UNINSTALLING -> MaterialTheme.colorScheme.tertiary
+
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        }
+
+        when (app.status) {
+            AppStatus.NOT_INSTALLED -> {
+                Spacer(modifier = Modifier.height(4.dp))
+                app.author?.let {
+                    Text(
+                        text = it,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+
+                // Build info string with | separator
+                val infoItems = buildList {
+                    app.version?.takeIf { it.isNotEmpty() }?.let { add("v$it") }
+                    app.size?.takeIf { it.isNotEmpty() }?.let { add(it) }
+                    app.rating?.takeIf { it.isNotEmpty() }?.let { add("★ $it") }
                 }
 
-                val buttonContainerColor = when (app.status) {
-                    AppStatus.INSTALLED -> MaterialTheme.colorScheme.tertiary
-                    AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
-                    AppStatus.NOT_INSTALLED -> MaterialTheme.colorScheme.primary
-                    AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.error
-
-                    else -> MaterialTheme.colorScheme.tertiary
+                if (infoItems.isNotEmpty()) {
+                    Text(
+                        text = infoItems.joinToString(" | "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+            }
 
-                val isTextColorWhite = app.status == AppStatus.UPDATE_AVAILABLE
+            else -> {
+                Text(
+                    text = stringResource(appInfoTextResId),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = textColor
+                )
+            }
+        }
+    }
+}
 
-                Box(
-                    modifier = Modifier.width(90.dp)
-                ) {
-                    // No button for INSTALLING, UNINSTALLING states - 0
-                    // UNAVAILABLE is handled by the outer if condition
-                    if (buttonTextResId != 0) {
-                        ActionButton(
-                            buttonTextResId = buttonTextResId,
-                            buttonColor = buttonContainerColor,
-                            isConnected = isConnected,
-                            isTextColorWhite = isTextColorWhite,
-                            onActionClick = onActionClick
-                        )
-                    }
-                }
+@Composable
+private fun ActionButton(
+    app: AppItem,
+    isConnected: Boolean,
+    onActionClick: () -> Unit
+) {
+    if (app.status != AppStatus.UNAVAILABLE) {
+        val buttonTextResId = when (app.status) {
+            AppStatus.INSTALLED -> R.string.open
+            AppStatus.UPDATE_AVAILABLE -> R.string.update
+            AppStatus.NOT_INSTALLED -> R.string.install
+            AppStatus.DOWNLOADING -> R.string.action_cancel
+
+            else -> 0
+        }
+
+        val buttonContainerColor = when (app.status) {
+            AppStatus.INSTALLED -> MaterialTheme.colorScheme.tertiary
+            AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
+            AppStatus.NOT_INSTALLED -> MaterialTheme.colorScheme.primary
+            AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.error
+
+            else -> MaterialTheme.colorScheme.tertiary
+        }
+
+        val isTextColorWhite = app.status == AppStatus.UPDATE_AVAILABLE
+
+        Box(
+            modifier = Modifier.width(90.dp)
+        ) {
+            // No button for INSTALLING, UNINSTALLING states - 0
+            // UNAVAILABLE is handled by the outer if condition
+            if (buttonTextResId != 0) {
+                ActionButton(
+                    buttonTextResId = buttonTextResId,
+                    buttonColor = buttonContainerColor,
+                    isConnected = isConnected,
+                    isTextColorWhite = isTextColorWhite,
+                    onActionClick = onActionClick
+                )
             }
         }
     }
@@ -234,4 +254,3 @@ private fun ActionButton(
         }
     }
 }
-

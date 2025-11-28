@@ -36,4 +36,3 @@ fun formatFileSize(sizeInBytes: String?): String {
         "Unknown"
     }
 }
-

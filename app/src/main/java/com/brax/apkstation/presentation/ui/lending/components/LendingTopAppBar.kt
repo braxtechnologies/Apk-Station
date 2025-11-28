@@ -35,6 +35,7 @@ import com.brax.apkstation.presentation.ui.lending.LendingViewState
 import com.brax.apkstation.presentation.ui.lending.StoreLendingViewModel
 import com.brax.apkstation.presentation.ui.navigation.AppNavigationActions
 
+@Suppress("CyclomaticComplexMethod")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LendingTopAppBar(

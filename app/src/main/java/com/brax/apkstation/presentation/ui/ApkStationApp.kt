@@ -7,16 +7,14 @@ import com.brax.apkstation.presentation.ui.navigation.AppNavGraph
 
 @Composable
 fun ApkStationApp(
-    initialAppUuid: String? = null,
-    openLendingScreen: Boolean = false
+    initialAppUuid: String? = null
 ) {
     val navController = rememberNavController()
 
     ApkStationTheme {
         AppNavGraph(
             navController = navController,
-            initialAppUuid = initialAppUuid,
-            openLendingScreen = openLendingScreen
+            initialAppUuid = initialAppUuid
         )
     }
 }

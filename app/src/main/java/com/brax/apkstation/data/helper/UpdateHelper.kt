@@ -1,15 +1,13 @@
 package com.brax.apkstation.data.helper
 
 import android.content.Context
+import android.content.pm.PackageManager
 import android.util.Log
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.OutOfQuotaPolicy
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import com.brax.apkstation.app.android.StoreApplication
@@ -102,38 +100,14 @@ class UpdateHelper @Inject constructor(
     }
 
     /**
-     * Check for updates now (expedited)
-     * Uses a one-time expedited worker to check for updates immediately
-     */
-    fun checkUpdatesNow() {
-        Log.i(TAG, "Triggering immediate update check")
-        
-        val work = OneTimeWorkRequestBuilder<UpdateWorker>()
-            .addTag(EXPEDITED_UPDATE_WORKER)
-            .setExpedited(OutOfQuotaPolicy.DROP_WORK_REQUEST)
-            .setConstraints(
-                Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
-                    .build()
-            )
-            .build()
-
-        WorkManager.getInstance(context)
-            .enqueueUniqueWork(EXPEDITED_UPDATE_WORKER, ExistingWorkPolicy.KEEP, work)
-    }
-
-    /**
      * Schedule periodic update checks based on user preferences
      */
     fun scheduleAutomatedCheck() {
         StoreApplication.scope.launch {
             if (!isAutoUpdateCheckEnabled()) {
-                Log.i(TAG, "Auto update check is disabled, skipping schedule")
                 return@launch
             }
 
-            Log.i(TAG, "Scheduling periodic app update checks")
-            
             val updateCheckInterval = appPreferencesRepository.getPreference(
                 PREFERENCE_UPDATE_CHECK_INTERVAL,
                 DEFAULT_UPDATE_INTERVAL_HOURS
@@ -173,7 +147,6 @@ class UpdateHelper @Inject constructor(
      * Cancel scheduled periodic update checks
      */
     fun cancelAutomatedCheck() {
-        Log.i(TAG, "Cancelling periodic app update checks")
         WorkManager.getInstance(context).cancelUniqueWork(UPDATE_WORKER)
     }
 
@@ -181,8 +154,6 @@ class UpdateHelper @Inject constructor(
      * Update the automated check settings (call after user changes preferences)
      */
     suspend fun updateAutomatedCheck() {
-        Log.i(TAG, "Updating periodic app update check settings")
-        
         if (isAutoUpdateCheckEnabled()) {
             scheduleAutomatedCheck()
         } else {
@@ -197,23 +168,10 @@ class UpdateHelper @Inject constructor(
         try {
             val app = storeDao.findApplicationByPackageName(packageName)
             if (app?.hasUpdate == true) {
-                Log.i(TAG, "Clearing update flag for $packageName")
                 storeDao.updateApplicationHasUpdate(packageName, false)
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to clear update flag for $packageName", e)
-        }
-    }
-
-    /**
-     * Clear all update flags
-     */
-    suspend fun clearAllUpdates() {
-        try {
-            Log.i(TAG, "Clearing all update flags")
-            storeDao.clearAllUpdateFlags()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to clear all update flags", e)
         }
     }
 
@@ -231,12 +189,10 @@ class UpdateHelper @Inject constructor(
                     
                     // If installed version >= latest version, clear update flag
                     if (installedVersion >= (app.latestVersionCode ?: 0)) {
-                        Log.i(TAG, "Clearing stale update flag for ${app.packageName}")
                         storeDao.updateApplicationHasUpdate(app.packageName, false)
                     }
-                } catch (e: android.content.pm.PackageManager.NameNotFoundException) {
+                } catch (_: PackageManager.NameNotFoundException) {
                     // App not installed, clear update flag
-                    Log.i(TAG, "Clearing update flag for uninstalled app ${app.packageName}")
                     storeDao.updateApplicationHasUpdate(app.packageName, false)
                 }
             }
@@ -275,4 +231,3 @@ class UpdateHelper @Inject constructor(
         ).firstOrNull() ?: true
     }
 }
-

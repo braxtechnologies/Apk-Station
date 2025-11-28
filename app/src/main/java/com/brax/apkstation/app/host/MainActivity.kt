@@ -37,8 +37,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             ApkStationApp(
-                initialAppUuid = if (openAppInfo) appUuid else null,
-                openLendingScreen = openLendingScreen
+                initialAppUuid = if (openAppInfo) appUuid else null
             )
         }
     }

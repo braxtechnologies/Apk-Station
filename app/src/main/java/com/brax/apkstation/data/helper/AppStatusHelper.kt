@@ -67,9 +67,9 @@ class AppStatusHelper @Inject constructor(
                     
                     // Determine status
                     val newStatus = if (stillHasUpdate) {
-                        com.brax.apkstation.presentation.ui.lending.AppStatus.UPDATE_AVAILABLE
+                        AppStatus.UPDATE_AVAILABLE
                     } else {
-                        com.brax.apkstation.presentation.ui.lending.AppStatus.INSTALLED
+                        AppStatus.INSTALLED
                     }
                     
                     // Update database with version info and status in one query
@@ -79,8 +79,6 @@ class AppStatusHelper @Inject constructor(
                         latestVersionCode = app.latestVersionCode ?: 0,
                         hasUpdate = stillHasUpdate
                     )
-                    
-                    Log.i(TAG, "Updated $packageName in DB: status=$newStatus, installedVersion=$installedVersionCode, latestVersion=${app.latestVersionCode}, hasUpdate=$stillHasUpdate")
                 } else {
                     Log.d(TAG, "App $packageName not in database, skipping update")
                 }
@@ -113,11 +111,9 @@ class AppStatusHelper @Inject constructor(
                             latestVersionCode = app.latestVersionCode ?: 0,
                             hasUpdate = false
                         )
-                        Log.i(TAG, "Updated favorited app $packageName to NOT_INSTALLED")
                     } else {
                         // Remove non-favorited apps from database
                         storeDao.deleteApplication(packageName)
-                        Log.i(TAG, "Removed non-favorited app $packageName from database")
                     }
                 }
                 

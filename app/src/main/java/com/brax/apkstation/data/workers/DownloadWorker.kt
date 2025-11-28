@@ -28,9 +28,13 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.security.MessageDigest
 
+const val NOTIFICATION_ID = 100
+const val CHANNEL_ID = "download_channel"
+
 /**
  * Background worker for downloading APK files from Lunr API
  */
+@Suppress("MaxLineLength")
 @HiltWorker
 class DownloadWorker @AssistedInject constructor(
     @Assisted private val context: Context,
@@ -42,13 +46,9 @@ class DownloadWorker @AssistedInject constructor(
 ) : CoroutineWorker(context, workerParams) {
 
     private val notificationManager = context.getSystemService<NotificationManager>()!!
-    private val NOTIFICATION_ID = 100
-    private val CHANNEL_ID = "download_channel"
 
     override suspend fun doWork(): Result {
         val packageName = inputData.getString(KEY_PACKAGE_NAME) ?: return Result.failure()
-
-        Log.i(TAG, "Starting download process for $packageName")
 
         return withContext(Dispatchers.IO) {
             try {
@@ -59,7 +59,6 @@ class DownloadWorker @AssistedInject constructor(
 
                 // If URL is not present, fetch it from API first
                 if (download.url.isNullOrBlank()) {
-                    Log.i(TAG, "No download URL for $packageName, fetching from API...")
                     fetchDownloadUrl(packageName, download) ?: return@withContext Result.failure(
                         workDataOf(KEY_ERROR to "Failed to get download URL")
                     )
@@ -90,29 +89,24 @@ class DownloadWorker @AssistedInject constructor(
 
                 // Check if cancelled after download
                 if (isStopped) {
-                    Log.i(TAG, "Worker stopped after download, aborting for $packageName")
                     throw IOException("Download cancelled")
                 }
 
                 val downloadAfter = storeDao.getDownload(packageName)
                 if (downloadAfter == null || downloadAfter.status == DownloadStatus.CANCELLED) {
-                    Log.i(TAG, "Download cancelled in DB after download phase for $packageName")
                     throw IOException("Download cancelled")
                 }
 
                 // Update status to downloaded
                 storeDao.updateDownloadStatus(packageName, DownloadStatus.DOWNLOADED)
-                Log.i(TAG, "Download completed for $packageName")
 
                 // Check if cancelled before verification
                 if (isStopped) {
-                    Log.i(TAG, "Worker stopped before verification, aborting for $packageName")
                     throw IOException("Download cancelled")
                 }
 
                 val downloadBeforeVerify = storeDao.getDownload(packageName)
                 if (downloadBeforeVerify == null || downloadBeforeVerify.status == DownloadStatus.CANCELLED) {
-                    Log.i(TAG, "Download cancelled in DB before verification for $packageName")
                     throw IOException("Download cancelled")
                 }
 
@@ -120,11 +114,9 @@ class DownloadWorker @AssistedInject constructor(
                 storeDao.updateDownloadStatus(packageName, DownloadStatus.VERIFYING)
                 val md5Hash = updatedDownload.md5 // Capture to local variable for smart cast
                 if (md5Hash != null) {
-                    Log.i(TAG, "Verifying MD5 for $packageName (expected: $md5Hash)")
                     if (!verifyMd5(downloadedFile, md5Hash)) {
                         throw IOException("MD5 verification failed. File may be corrupted.")
                     }
-                    Log.i(TAG, "MD5 verification passed for $packageName")
                 } else {
                     Log.w(TAG, "No MD5 hash provided for $packageName - skipping verification!")
                     // Just check file exists and has content
@@ -137,24 +129,14 @@ class DownloadWorker @AssistedInject constructor(
                 // Update download with file location
                 storeDao.updateApkLocation(packageName, downloadedFile.absolutePath)
 
-                Log.i(
-                    TAG,
-                    "Verification completed for $packageName at ${downloadedFile.absolutePath}"
-                )
-
                 // CRITICAL: Final check before installation - this is the last chance to abort!
                 if (isStopped) {
-                    Log.i(TAG, "Worker stopped, aborting installation for $packageName")
                     throw IOException("Download cancelled")
                 }
 
                 // Double-check download still exists and NOT cancelled in DB
                 val currentDownload = storeDao.getDownload(packageName)
                 if (currentDownload == null || currentDownload.status == DownloadStatus.CANCELLED) {
-                    Log.i(
-                        TAG,
-                        "Download ${if (currentDownload == null) "removed" else "cancelled"}, aborting installation for $packageName"
-                    )
                     // Clean up downloaded file
                     try {
                         downloadedFile.delete()
@@ -170,7 +152,6 @@ class DownloadWorker @AssistedInject constructor(
                 // Check if app is in foreground
                 if (isAppInForeground()) {
                     // App is in foreground - trigger installation immediately
-                    Log.i(TAG, "App in foreground - triggering installation for $packageName")
                     val downloadEntity = storeDao.getDownload(packageName)
                     if (downloadEntity != null) {
                         try {
@@ -186,10 +167,6 @@ class DownloadWorker @AssistedInject constructor(
                             storeDao.updateDownloadStatus(packageName, DownloadStatus.COMPLETED)
                         }
                     }
-                } else {
-                    // App in background - let user click Install button later
-                    // File is already downloaded and will be reused
-                    Log.i(TAG, "App in background - install button will use downloaded file for $packageName")
                 }
                 
                 Result.success()
@@ -202,10 +179,6 @@ class DownloadWorker @AssistedInject constructor(
                 if (currentDownload != null) {
                     // Download still exists, so this is a legitimate failure (not superseded)
                     storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
-                    Log.i(TAG, "Marked download as FAILED for $packageName")
-                } else {
-                    // Download was deleted (superseded by new session), don't update DB
-                    Log.i(TAG, "Download was superseded for $packageName, not marking as FAILED")
                 }
 
                 Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
@@ -219,8 +192,6 @@ class DownloadWorker @AssistedInject constructor(
      */
     private suspend fun fetchDownloadUrl(packageName: String, download: Download): String? {
         return try {
-            Log.i(TAG, "Fetching download URL from API for $packageName")
-            
             // Get app info to extract UUID
             val app = storeDao.findApplicationByPackageName(packageName)
             val uuid = app?.uuid
@@ -238,8 +209,6 @@ class DownloadWorker @AssistedInject constructor(
                         // URL is ready
                         downloadResponse.type == "download" || 
                         (downloadResponse.type == null && downloadResponse.url.isNotEmpty()) -> {
-                            Log.i(TAG, "Download URL received for $packageName")
-                            
                             // Update download entry with URL and MD5
                             storeDao.updateDownload(download.copy(
                                 url = downloadResponse.url,
@@ -291,35 +260,27 @@ class DownloadWorker @AssistedInject constructor(
         if (file.exists()) {
             val download = storeDao.getDownload(packageName)
             val expectedMd5 = download?.md5
-            
+
             if (expectedMd5 != null && verifyMd5(file, expectedMd5)) {
-                Log.i(TAG, "✅ File already downloaded and verified: ${file.name}")
                 return file
             } else if (expectedMd5 == null) {
                 // No MD5 to verify against, assume file is good if it exists
-                Log.i(TAG, "✅ File already exists (no MD5 check): ${file.name}")
                 return file
             } else {
                 // MD5 mismatch, delete and re-download
-                Log.i(TAG, "❌ Existing file failed MD5 check, re-downloading: ${file.name}")
                 file.delete()
             }
         }
 
         // Clean up any old tmp files
         downloadDir.listFiles { _, name -> name.endsWith(".tmp") }?.forEach { oldTmp ->
-            Log.i(TAG, "Cleaning up old tmp file: ${oldTmp.name}")
             oldTmp.delete()
         }
-
-        Log.i(TAG, "Downloading from: $url")
-        Log.i(TAG, "Saving to: ${file.absolutePath}")
 
         // Check if we can resume a partial download
         var resumeFromByte = 0L
         if (tmpFile.exists() && tmpFile.length() > 0) {
             resumeFromByte = tmpFile.length()
-            Log.i(TAG, "🔄 Resuming download from ${resumeFromByte / 1024 / 1024}MB")
         }
 
         val requestBuilder = Request.Builder().url(url)
@@ -358,10 +319,6 @@ class DownloadWorker @AssistedInject constructor(
                         if (checkCounter++ % 8 == 0) { // Every 8 * 8KB = 64KB
                             val currentDownload = storeDao.getDownload(packageName)
                             if (currentDownload == null || currentDownload.status == DownloadStatus.CANCELLED) {
-                                Log.i(
-                                    TAG,
-                                    "Download superseded/cancelled in DB during download for $packageName"
-                                )
                                 throw IOException("Download cancelled")
                             }
                         }
@@ -392,10 +349,6 @@ class DownloadWorker @AssistedInject constructor(
         // CRITICAL: Final check - verify download hasn't been cancelled/superseded
         val finalCheck = storeDao.getDownload(packageName)
         if (finalCheck == null || finalCheck.status == DownloadStatus.CANCELLED) {
-            Log.i(
-                TAG,
-                "Download was cancelled/removed before rename, cleaning up tmp file for $packageName"
-            )
             tmpFile.delete()
             throw IOException("Download cancelled before completion")
         }
@@ -431,7 +384,7 @@ class DownloadWorker @AssistedInject constructor(
         // Update notification (try foreground, fallback to background)
         try {
             setForeground(getForegroundInfo(displayName, progress))
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             // Foreground service not available, use regular notification
             showBackgroundNotification(displayName, progress)
         }

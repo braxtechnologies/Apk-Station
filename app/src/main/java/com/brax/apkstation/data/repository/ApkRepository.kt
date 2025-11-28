@@ -3,12 +3,14 @@ package com.brax.apkstation.data.repository
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
+import android.util.Log
 import com.brax.apkstation.data.auth.TokenManager
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.network.LunrApiService
 import com.brax.apkstation.data.network.dto.ApkDetailsDto
 import com.brax.apkstation.data.network.dto.ApkPreviewDto
 import com.brax.apkstation.data.network.dto.CategoryDto
+import com.brax.apkstation.data.network.dto.DownloadResponseDto
 import com.brax.apkstation.data.network.dto.EnrollRequestDto
 import com.brax.apkstation.data.network.dto.EnrollResponseDto
 import com.brax.apkstation.data.network.dto.RefreshResponseDto
@@ -20,9 +22,11 @@ import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Result
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import java.net.SocketTimeoutException
 import javax.inject.Inject
 import javax.inject.Singleton
 
+@Suppress("TooManyFunctions", "MaxLineLength")
 @Singleton
 class ApkRepository @Inject constructor(
     private val apiService: LunrApiService,
@@ -41,9 +45,7 @@ class ApkRepository @Inject constructor(
         if (!tokenManager.isEnrolled()) {
             // Enroll device first
             when (val result = enrollDevice()) {
-                is Result.Success -> {
-                    // Token saved, continue
-                }
+                is Result.Success -> {}
                 is Result.Error -> {
                     throw Exception("Failed to enroll device: ${result.message}")
                 }
@@ -56,9 +58,7 @@ class ApkRepository @Inject constructor(
         // Check if token needs refresh
         if (tokenManager.isTokenExpired()) {
             when (refreshAccessToken()) {
-                is Result.Success -> {
-                    // Token refreshed, continue
-                }
+                is Result.Success -> {}
                 is Result.Error -> {
                     // Refresh failed, try to re-enroll
                     tokenManager.clearTokens()
@@ -117,8 +117,7 @@ class ApkRepository @Inject constructor(
                 // Handle 208 - Device already enrolled
                 if (body != null && body.code == 208) {
                     val errorMsg = "Device already enrolled with this identifier. This shouldn't happen with timestamp-based UIDs."
-                    android.util.Log.e("ApkRepository", errorMsg)
-                    android.util.Log.e("ApkRepository", "Response: ${body.response}")
+                    Log.e("ApkRepository", "Response: ${body.response}")
                     return Result.Error(errorMsg)
                 }
                 
@@ -148,35 +147,35 @@ class ApkRepository @Inject constructor(
                                 Result.Success(enrollResponse)
                             } catch (e: Exception) {
                                 val errorMsg = "Failed to parse enrollment response: ${e.message}"
-                                android.util.Log.e("ApkRepository", errorMsg, e)
+                                Log.e("ApkRepository", errorMsg, e)
                                 Result.Error(errorMsg)
                             }
                         }
                         is String -> {
                             // Error case - response is an error message string
                             val errorMsg = "Enrollment failed: $responseData"
-                            android.util.Log.e("ApkRepository", errorMsg)
+                            Log.e("ApkRepository", errorMsg)
                             Result.Error(errorMsg)
                         }
                         else -> {
-                            val errorMsg = "Enrollment failed: Unexpected response type ${responseData?.javaClass?.simpleName}"
-                            android.util.Log.e("ApkRepository", errorMsg)
+                            val errorMsg = "Enrollment failed: Unexpected response type ${responseData.javaClass.simpleName}"
+                            Log.e("ApkRepository", errorMsg)
                             Result.Error(errorMsg)
                         }
                     }
                 } else {
                     val errorMsg = "Enrollment failed: API returned code ${body?.code}, response: ${body?.response}"
-                    android.util.Log.e("ApkRepository", errorMsg)
+                    Log.e("ApkRepository", errorMsg)
                     Result.Error(errorMsg)
                 }
             } else {
                 val errorBody = response.errorBody()?.string()
                 val errorMsg = "HTTP ${response.code()}: ${response.message()}, body: $errorBody"
-                android.util.Log.e("ApkRepository", errorMsg)
+                Log.e("ApkRepository", errorMsg)
                 Result.Error(errorMsg)
             }
         } catch (e: Exception) {
-            android.util.Log.e("ApkRepository", "Enrollment error", e)
+            Log.e("ApkRepository", "Enrollment error", e)
             Result.Error(e.message ?: "Enrollment failed")
         }
     }
@@ -215,18 +214,18 @@ class ApkRepository @Inject constructor(
                                 Result.Success(refreshResponse)
                             } catch (e: Exception) {
                                 val errorMsg = "Failed to parse refresh response: ${e.message}"
-                                android.util.Log.e("ApkRepository", errorMsg, e)
+                                Log.e("ApkRepository", errorMsg, e)
                                 Result.Error(errorMsg)
                             }
                         }
                         is String -> {
                             val errorMsg = "Token refresh failed: $responseData"
-                            android.util.Log.e("ApkRepository", errorMsg)
+                            Log.e("ApkRepository", errorMsg)
                             Result.Error(errorMsg)
                         }
                         else -> {
                             val errorMsg = "Token refresh failed: Unexpected response type"
-                            android.util.Log.e("ApkRepository", errorMsg)
+                            Log.e("ApkRepository", errorMsg)
                             Result.Error(errorMsg)
                         }
                     }
@@ -237,43 +236,9 @@ class ApkRepository @Inject constructor(
                 Result.Error("HTTP ${response.code()}: ${response.message()}")
             }
         } catch (e: Exception) {
-            android.util.Log.e("ApkRepository", "Token refresh error", e)
+            Log.e("ApkRepository", "Token refresh error", e)
             Result.Error(e.message ?: "Token refresh failed")
         }
-    }
-    
-    /**
-     * Logout and revoke tokens on server
-     */
-    suspend fun logout(): Result<String> {
-        return try {
-            val bearerToken = tokenManager.getBearerToken()
-            if (bearerToken != null) {
-                val response = apiService.logout(bearerToken)
-                
-                if (response.isSuccessful && response.body()?.code == 200) {
-                    tokenManager.clearTokens()
-                    Result.Success("Logged out successfully")
-                } else {
-                    // Clear tokens anyway
-                    tokenManager.clearTokens()
-                    Result.Error("Logout failed but tokens cleared locally")
-                }
-            } else {
-                Result.Error("No active session")
-            }
-        } catch (e: Exception) {
-            // Clear tokens anyway
-            tokenManager.clearTokens()
-            Result.Error(e.message ?: "Logout failed")
-        }
-    }
-    
-    /**
-     * Check if device is enrolled
-     */
-    suspend fun isEnrolled(): Boolean {
-        return tokenManager.isEnrolled()
     }
     
     // ========== APK API Methods ==========
@@ -378,13 +343,13 @@ class ApkRepository @Inject constructor(
                 return Result.Error("Either uuid or packageName must be provided")
             }
             
-            android.util.Log.d("ApkRepository", "getApkDetails: uuid=$uuid, packageName=$packageName")
+            Log.d("ApkRepository", "getApkDetails: uuid=$uuid, packageName=$packageName")
             
             val response = apiService.getApkDetails(getBearerToken(), uuid, packageName)
             
             if (response.isSuccessful) {
                 val body = response.body()
-                android.util.Log.d("ApkRepository", "Details response: code=${body?.code}, uuid=${body?.response?.uuid}, package=${body?.response?.packageName}")
+                Log.d("ApkRepository", "Details response: code=${body?.code}, uuid=${body?.response?.uuid}, package=${body?.response?.packageName}")
                 
                 if (body != null && body.code == 200) {
                     Result.Success(body.response)
@@ -395,11 +360,11 @@ class ApkRepository @Inject constructor(
                 }
             } else {
                 val errorBody = response.errorBody()?.string()
-                android.util.Log.e("ApkRepository", "Details error: HTTP ${response.code()}, body: $errorBody")
+                Log.e("ApkRepository", "Details error: HTTP ${response.code()}, body: $errorBody")
                 Result.Error("HTTP ${response.code()}: ${response.message()}")
             }
         } catch (e: Exception) {
-            android.util.Log.e("ApkRepository", "Details exception", e)
+            Log.e("ApkRepository", "Details exception", e)
             Result.Error(e.message ?: "Unknown error occurred")
         }
     }
@@ -419,20 +384,20 @@ class ApkRepository @Inject constructor(
         uuid: String? = null,
         packageName: String? = null,
         versionCode: Int? = null
-    ): Result<com.brax.apkstation.data.network.dto.DownloadResponseDto> {
+    ): Result<DownloadResponseDto> {
         return try {
             // Validate that at least one parameter is provided
             if (uuid.isNullOrEmpty() && packageName.isNullOrEmpty()) {
                 return Result.Error("Either uuid or packageName must be provided")
             }
             
-            android.util.Log.d("ApkRepository", "getDownloadUrl: uuid=$uuid, packageName=$packageName, versionCode=$versionCode")
+            Log.d("ApkRepository", "getDownloadUrl: uuid=$uuid, packageName=$packageName, versionCode=$versionCode")
             
             val response = apiService.getDownloadUrl(getBearerToken(), uuid, packageName, versionCode)
             
             if (response.isSuccessful) {
                 val body = response.body()
-                android.util.Log.d("ApkRepository", "Download response: code=${body?.code}, response type=${body?.response?.type}")
+                Log.d("ApkRepository", "Download response: code=${body?.code}, response type=${body?.response?.type}")
                 
                 if (body != null && body.code == 200) {
                     Result.Success(body.response)
@@ -446,7 +411,7 @@ class ApkRepository @Inject constructor(
                 }
             } else {
                 val errorBody = response.errorBody()?.string()
-                android.util.Log.e("ApkRepository", "Download URL error: HTTP ${response.code()}, body: $errorBody")
+                Log.e("ApkRepository", "Download URL error: HTTP ${response.code()}, body: $errorBody")
                 
                 // Handle HTTP 408 timeout
                 if (response.code() == 408) {
@@ -456,11 +421,11 @@ class ApkRepository @Inject constructor(
                 }
             }
         } catch (e: Exception) {
-            android.util.Log.e("ApkRepository", "Download URL exception", e)
+            Log.e("ApkRepository", "Download URL exception", e)
             
             // Handle timeout exceptions specifically
             when (e) {
-                is java.net.SocketTimeoutException -> {
+                is SocketTimeoutException -> {
                     Result.Error("Request timed out. The app is being prepared from external source. Please try again in a few minutes.")
                 }
                 else -> {
@@ -469,47 +434,7 @@ class ApkRepository @Inject constructor(
             }
         }
     }
-    
-    /**
-     * Request an APK to be added to the store
-     * Uses /request endpoint - returns 202 if accepted, 200 if already exists
-     */
-    suspend fun requestApk(packageName: String): Result<String> {
-        return try {
-            val response = apiService.requestApk(getBearerToken(), packageName)
-            
-            if (response.isSuccessful) {
-                val body = response.body()
-                when (body?.code) {
-                    202 -> Result.Success("Request accepted. APK will be added soon.")
-                    200 -> Result.Success("APK already exists in the store.")
-                    else -> Result.Error("API returned code: ${body?.code}")
-                }
-            } else {
-                Result.Error("HTTP ${response.code()}: ${response.message()}")
-            }
-        } catch (e: Exception) {
-            Result.Error(e.message ?: "Unknown error occurred")
-        }
-    }
-    
-    /**
-     * Ping API to check availability
-     * Note: Ping endpoint does not require authentication
-     */
-    suspend fun pingApi(): Result<Boolean> {
-        return try {
-            val response = apiService.ping()
-            
-            if (response.isSuccessful && response.body()?.code == 200) {
-                Result.Success(true)
-            } else {
-                Result.Error("API not available")
-            }
-        } catch (e: Exception) {
-            Result.Error(e.message ?: "Unknown error occurred")
-        }
-    }
+
 
     /**
      * Check for updates for multiple apps at once
@@ -544,13 +469,6 @@ class ApkRepository @Inject constructor(
     // ========== Local Database Operations ==========
     
     /**
-     * Get all apps from local database
-     */
-    fun getAllAppsFromDb(): Flow<List<DBApplication>> {
-        return storeDao.getAllApplications()
-    }
-    
-    /**
      * Get all apps from local database (non-Flow version)
      */
     suspend fun getAllAppsFromDbNoFlow(): List<DBApplication> {
@@ -570,58 +488,7 @@ class ApkRepository @Inject constructor(
     suspend fun getAppByPackageName(packageName: String): DBApplication? {
         return storeDao.findApplicationByPackageName(packageName)
     }
-    
-    /**
-     * Track app changes by package name
-     */
-    fun trackAppByPackageName(packageName: String): Flow<DBApplication?> {
-        return storeDao.getAndTrackApplication(packageName)
-    }
-    
-    /**
-     * Update app status in local database
-     */
-    suspend fun updateAppStatus(packageName: String, status: AppStatus) {
-        val app = storeDao.findApplicationByPackageName(packageName)
-        app?.let {
-            it.status = status
-            storeDao.updateApplication(it)
-        }
-    }
-    
-    /**
-     * Delete app from local database
-     */
-    suspend fun deleteApp(packageName: String) {
-        storeDao.deleteApplication(packageName)
-    }
-    
-    /**
-     * Increment retry count for a requested app
-     * Returns the new retry count
-     */
-    suspend fun incrementRetryCount(packageName: String): Int {
-        val app = storeDao.findApplicationByPackageName(packageName)
-        return if (app != null) {
-            app.retryCount += 1
-            storeDao.updateApplication(app)
-            app.retryCount
-        } else {
-            0
-        }
-    }
-    
-    /**
-     * Reset retry count for an app
-     */
-    suspend fun resetRetryCount(packageName: String) {
-        val app = storeDao.findApplicationByPackageName(packageName)
-        app?.let {
-            it.retryCount = 0
-            storeDao.updateApplication(it)
-        }
-    }
-    
+
     // ========== Private Helper Methods ==========
     
     /**
@@ -638,13 +505,6 @@ class ApkRepository @Inject constructor(
      */
     suspend fun saveApkDetailsToDb(details: ApkDetailsDto, status: AppStatus) {
         saveAppToDatabase(details, status)
-    }
-
-    /**
-     * Observe all apps changes
-     */
-    suspend fun observeAllAps(): Flow<List<DBApplication?>> {
-        return storeDao.getAllApplications()
     }
 
     /**
@@ -669,40 +529,12 @@ class ApkRepository @Inject constructor(
     }
     
     /**
-     * Update download URL and MD5 hash
-     */
-    suspend fun updateDownloadUrl(packageName: String, url: String, md5: String?) {
-        storeDao.updateDownloadUrl(packageName, url, md5)
-    }
-    
-    /**
      * Get download from database
      */
     suspend fun getDownload(packageName: String): Download? {
         return storeDao.getDownload(packageName)
     }
-    
-    /**
-     * Get all downloads from database
-     */
-    suspend fun getAllDownloads(): List<Download> {
-        return storeDao.getAllDownloadsList()
-    }
-    
-    /**
-     * Observe all downloads from database as Flow
-     */
-    fun observeAllDownloads(): Flow<List<Download>> {
-        return storeDao.getAllDownloads()
-    }
-    
-    /**
-     * Get all apps that have updates available (optimized for landing page)
-     */
-    suspend fun getAppsWithUpdates(): List<DBApplication> {
-        return storeDao.getAllApplicationsNoFlow().filter { it.hasUpdate }
-    }
-    
+
     /**
      * Convert detailed APK info to DBApplication
      */
@@ -747,14 +579,7 @@ class ApkRepository @Inject constructor(
     }
     
     // ========== Favorites Operations ==========
-    
-    /**
-     * Get all favorite apps from local database
-     */
-    fun getFavoriteApps(): Flow<List<DBApplication>> {
-        return storeDao.getFavoriteApplications()
-    }
-    
+
     /**
      * Get all favorite apps from local database (non-Flow version)
      */
@@ -783,7 +608,7 @@ class ApkRepository @Inject constructor(
                 }
                 else -> {
                     // Failed to fetch, ignore
-                    android.util.Log.w("ApkRepository", "Failed to fetch app details for favorite: $packageName")
+                    Log.w("ApkRepository", "Failed to fetch app details for favorite: $packageName")
                 }
             }
         }

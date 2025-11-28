@@ -13,6 +13,7 @@ import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.data.event.EventFlow
 import com.brax.apkstation.data.helper.AppStatusHelper
 import com.brax.apkstation.data.helper.DownloadHelper
+import com.brax.apkstation.data.helper.NetworkMonitor
 import com.brax.apkstation.data.helper.UpdateHelper
 import com.brax.apkstation.data.receiver.PackageManagerReceiver
 import com.brax.apkstation.utils.CommonUtils
@@ -44,6 +45,9 @@ class StoreApplication : Application(), Configuration.Provider {
     
     @Inject
     lateinit var appStatusHelper: AppStatusHelper
+    
+    @Inject
+    lateinit var networkMonitor: NetworkMonitor
 
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
@@ -93,6 +97,10 @@ class StoreApplication : Application(), Configuration.Provider {
         
         // Initialize app status helper to sync DB with installations/uninstallations
         appStatusHelper.init()
+        
+        // Initialize network monitor (starts automatically)
+        // Access via networkMonitor.isConnected StateFlow
+        networkMonitor.checkConnectivity()
 
         //Register broadcast receiver for package install/uninstall
         ContextCompat.registerReceiver(

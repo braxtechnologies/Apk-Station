@@ -25,6 +25,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
 
+const val CHANNEL_ID = "install_channel"
+
 /**
  * Receiver for handling installation status callbacks from PackageInstaller
  * Integrates with event system for reactive updates
@@ -35,8 +37,6 @@ class InstallStatusReceiver : BroadcastReceiver() {
     @Inject
     lateinit var database: StoreDatabase
 
-    private val CHANNEL_ID = "install_channel"
-    
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     override fun onReceive(context: Context, intent: Intent?) {
