@@ -102,12 +102,44 @@ class DownloadHelper @Inject constructor(
      * @param packageName Package name of the download to cancel
      */
     suspend fun cancel(packageName: String) {
-        // Update status to cancelled
-        downloadDao.updateDownloadStatus(packageName, DownloadStatus.CANCELLED)
+        Log.i(TAG, "Cancelling download for $packageName")
         
         // Cancel the work
-        WorkManager.getInstance(context)
-            .cancelAllWorkByTag("$PACKAGE_NAME:$packageName")
+        workManager.cancelAllWorkByTag("$DOWNLOAD_WORKER/$packageName")
+        
+        // Delete the download entry from database
+        downloadDao.deleteDownload(packageName)
+        
+        // Check if app should be removed from applications table
+        val app = downloadDao.findApplicationByPackageName(packageName)
+        if (app != null) {
+            // Check if app is installed
+            val isInstalled = try {
+                context.packageManager.getPackageInfo(packageName, 0)
+                true
+            } catch (e: Exception) {
+                false
+            }
+            
+            // Only delete if NOT installed and NOT favorited
+            if (!isInstalled && !app.isFavorite) {
+                downloadDao.deleteApplication(packageName)
+                Log.i(TAG, "Removed app $packageName from applications database")
+            } else {
+                Log.i(TAG, "Kept app $packageName in database (installed: $isInstalled, favorite: ${app.isFavorite})")
+            }
+        }
+        
+        // Delete downloaded files if any
+        try {
+            val downloadDir = java.io.File(context.filesDir, "downloads/$packageName")
+            if (downloadDir.exists()) {
+                downloadDir.deleteRecursively()
+                Log.i(TAG, "Deleted download files for $packageName")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to delete download files for $packageName", e)
+        }
     }
 
     /**
