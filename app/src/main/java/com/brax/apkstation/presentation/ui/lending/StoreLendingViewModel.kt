@@ -8,16 +8,13 @@ import android.util.Log
 import androidx.compose.runtime.Immutable
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import androidx.work.workDataOf
 import com.brax.apkstation.BuildConfig
+import com.brax.apkstation.app.android.StoreApplication
+import com.brax.apkstation.data.event.InstallerEvent
+import com.brax.apkstation.data.helper.DownloadHelper
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
-import com.brax.apkstation.data.workers.RequestDownloadUrlWorker
 import com.brax.apkstation.presentation.ui.lending.components.SectionTab
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.Result
@@ -37,22 +34,20 @@ import javax.inject.Inject
 @HiltViewModel
 class StoreLendingViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
-    private val workManager: WorkManager,
+    private val downloadHelper: DownloadHelper,
+    private val installerManager: com.brax.apkstation.data.installer.AppInstallerManager,
     private val appPreferencesRepository: AppPreferencesRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
     private var allApps = emptyList<AppItem>() // Store all apps
 
-    // Track which packages are currently being monitored to prevent duplicates
-    private val monitoringPackages = mutableSetOf<String>()
-
     // Search cache to avoid overwhelming the backend
     private val searchCache = SearchCache()
-    
+
     // Section cache for BRAX Picks, Top Charts, New Releases
     private val sectionCache = SectionCache()
-    
+
     // Featured apps details cache (with images for carousel)
     private val featuredAppsDetailsCache = FeaturedAppsDetailsCache()
 
@@ -71,7 +66,7 @@ class StoreLendingViewModel @Inject constructor(
                 selectedSection = "featured"
             )
         )
-    
+
     val favoritesEnabled = appPreferencesRepository
         .getPreference(Constants.ENABLE_FAVORITES_KEY, false)
         .stateIn(
@@ -81,6 +76,118 @@ class StoreLendingViewModel @Inject constructor(
         )
 
     private var searchJob: Job? = null
+
+    init {
+        // Observe installer events for immediate UI feedback
+        observeInstallationEvents()
+
+        // Observe download state changes
+        observeDownloadState()
+        
+        // Observe database changes (Room notifies when AppStatusHelper updates)
+        observeDatabaseChanges()
+    }
+    
+    /**
+     * Observe installer events for immediate UI feedback and error messages
+     * - Installing: Show immediate feedback
+     * - Failed: Show error message
+     */
+    private fun observeInstallationEvents() {
+        viewModelScope.launch {
+            StoreApplication.events.installerEvent.collect { event ->
+                when (event) {
+                    is InstallerEvent.Installing -> {
+                        // Show immediate feedback for installing state
+                        updateAppStatus(event.packageName, AppStatus.INSTALLING)
+                    }
+                    is InstallerEvent.Failed -> {
+                        // Show error message and refresh status
+                        handleInstallFailed(event.packageName, event.error)
+                    }
+                    // Installed/Uninstalled handled by database observation
+                    else -> {}
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe database changes for app installations/uninstallations
+     * Room automatically notifies this Flow when AppStatusHelper updates the DB
+     */
+    private fun observeDatabaseChanges() {
+        viewModelScope.launch {
+            apkRepository.getAllApplications().collect { dbApps ->
+                val dbPackageNames = dbApps.map { it.packageName }.toSet()
+                
+                // Update status for all apps in our lists
+                _lendingUiState.value.apps.forEach { displayedApp ->
+                    val dbApp = dbApps.find { it.packageName == displayedApp.packageName }
+                    
+                    if (dbApp != null) {
+                        // App is in database - use DB status
+                        updateAppStatus(dbApp.packageName, dbApp.status, dbApp.hasUpdate)
+                    } else {
+                        // App was removed from database (uninstalled non-favorite)
+                        // Check actual installation status from PackageManager
+                        val status = getAppStatus(displayedApp.packageName, false)
+                        updateAppStatus(displayedApp.packageName, status, false)
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe download state from DownloadHelper
+     */
+    private fun observeDownloadState() {
+        viewModelScope.launch {
+            downloadHelper.downloadsList.collect { downloads ->
+                downloads.forEach { download ->
+                    when (download.status) {
+                        DownloadStatus.QUEUED,
+                        DownloadStatus.DOWNLOADING,
+                        DownloadStatus.DOWNLOADED,
+                        DownloadStatus.VERIFYING -> updateAppStatus(download.packageName, AppStatus.DOWNLOADING)
+                        
+                        DownloadStatus.INSTALLING -> updateAppStatus(download.packageName, AppStatus.INSTALLING)
+                        
+                        DownloadStatus.COMPLETED -> {
+                            // Download completed - refresh status from database/PackageManager
+                            viewModelScope.launch {
+                                val hasUpdate = apkRepository.getAppByPackageName(download.packageName)?.hasUpdate ?: false
+                                val status = getAppStatus(download.packageName, hasUpdate)
+                                updateAppStatus(download.packageName, status, hasUpdate)
+                            }
+                        }
+                        
+                        DownloadStatus.FAILED,
+                        DownloadStatus.CANCELLED,
+                        DownloadStatus.UNAVAILABLE -> {
+                            // Refresh status
+                            viewModelScope.launch {
+                                val hasUpdate = apkRepository.getAppByPackageName(download.packageName)?.hasUpdate ?: false
+                                val status = getAppStatus(download.packageName, hasUpdate)
+                                updateAppStatus(download.packageName, status, hasUpdate)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Handle installation failure
+     * Just refresh UI state and show error
+     */
+    private suspend fun handleInstallFailed(packageName: String, error: String?) {
+        val status = getAppStatus(packageName)
+        updateAppStatus(packageName, status)
+        _lendingUiState.update { it.copy(errorMessage = error ?: "Installation failed") }
+    }
 
     fun onAppActionButtonClick(app: AppItem) {
         when (app.status) {
@@ -101,9 +208,16 @@ class StoreLendingViewModel @Inject constructor(
             }
 
             else -> {
-                // Do nothing for INSTALLING, REQUESTED, UNAVAILABLE, etc.
+                // Do nothing for INSTALLING, UNAVAILABLE, etc.
             }
         }
+    }
+    
+    /**
+     * Clear error message after it has been shown
+     */
+    fun clearErrorMessage() {
+        _lendingUiState.update { it.copy(errorMessage = null) }
     }
 
     /**
@@ -116,11 +230,6 @@ class StoreLendingViewModel @Inject constructor(
         isRefresh: Boolean = false
     ) {
         viewModelScope.launch {
-            // Clean up stale downloads first (only on initial load, not on refresh)
-            if (!isRefresh) {
-                cleanupStaleDownloads()
-            }
-
             // Check if we have network connection
             val isConnected = _lendingUiState.value.isConnected
 
@@ -163,7 +272,8 @@ class StoreLendingViewModel @Inject constructor(
 
             try {
                 // Fetch apps from API
-                when (val result = apkRepository.fetchApkList(category = category, limit = 50, sort = sort)) {
+                when (val result =
+                    apkRepository.fetchApkList(category = category, limit = 50, sort = sort)) {
                     is Result.Success -> {
                         // Convert API DTOs to AppItem for display with actual installation status
                         val appItems = result.data.map { apk ->
@@ -221,7 +331,7 @@ class StoreLendingViewModel @Inject constructor(
 
                         allApps = appItems
                         _lendingUiState.update { it.copy(apps = appItems) }
-                        
+
                         // Cache the results for this section (except categories)
                         if (category == null) {
                             sectionCache.put(sort, appItems)
@@ -231,13 +341,8 @@ class StoreLendingViewModel @Inject constructor(
                         // Extract and create categories
                         updateCategories(appItems)
 
-                        // Start monitoring any apps that are currently downloading/installing
-                        appItems.forEach { app ->
-                            if (app.status == AppStatus.DOWNLOADING || app.status == AppStatus.INSTALLING) {
-                                monitorDownloadProgress(app.packageName)
-                            }
-                        }
-                        
+                        // Event system will automatically update status
+
                         // Fetch featured app details with images for BRAX Picks section
                         if (sort == "featured" && category == null) {
                             fetchFeaturedAppsDetails(appItems)
@@ -263,7 +368,7 @@ class StoreLendingViewModel @Inject constructor(
             }
         }
     }
-    
+
     /**
      * Fetch detailed information (including images) for the first 5 featured apps
      * Results are cached for 5 minutes to avoid excessive API calls
@@ -287,15 +392,18 @@ class StoreLendingViewModel @Inject constructor(
                     allApps = updatedApps
                     return@launch
                 }
-                
+
                 // Fetch details for first 5 apps
                 val first5Apps = appItems.take(5)
                 val appsWithDetails = mutableListOf<AppItem>()
-                
+
                 first5Apps.forEach { app ->
                     // Use UUID if available, otherwise use package name
                     val uuid = app.uuid?.takeIf { it.isNotEmpty() }
-                    when (val result = apkRepository.getApkDetails(uuid = uuid, packageName = if (uuid == null) app.packageName else null)) {
+                    when (val result = apkRepository.getApkDetails(
+                        uuid = uuid,
+                        packageName = if (uuid == null) app.packageName else null
+                    )) {
                         is Result.Success -> {
                             val details = result.data
                             // Create updated AppItem with images and excerpt
@@ -305,23 +413,31 @@ class StoreLendingViewModel @Inject constructor(
                                     excerpt = details.excerpt?.substringBefore("\r\n")
                                 )
                             )
-                            Log.d("StoreLendingViewModel", "Fetched details for ${app.name}, images: ${details.images.size}")
+                            Log.d(
+                                "StoreLendingViewModel",
+                                "Fetched details for ${app.name}, images: ${details.images.size}"
+                            )
                         }
+
                         is Result.Error -> {
-                            Log.e("StoreLendingViewModel", "Failed to fetch details for ${app.name}: ${result.message}")
+                            Log.e(
+                                "StoreLendingViewModel",
+                                "Failed to fetch details for ${app.name}: ${result.message}"
+                            )
                             // Keep app without images
                             appsWithDetails.add(app)
                         }
+
                         is Result.Loading -> {
                             // Keep app without images
                             appsWithDetails.add(app)
                         }
                     }
                 }
-                
+
                 // Cache the enriched apps
                 featuredAppsDetailsCache.put(appsWithDetails)
-                
+
                 // Update UI with enriched apps
                 val updatedApps = appItems.mapIndexed { index, app ->
                     if (index < 5) {
@@ -330,13 +446,13 @@ class StoreLendingViewModel @Inject constructor(
                         app
                     }
                 }
-                
+
                 _lendingUiState.update { it.copy(apps = updatedApps) }
                 allApps = updatedApps
-                
+
                 // Update section cache with enriched data
                 sectionCache.put("featured", updatedApps)
-                
+
             } catch (e: Exception) {
                 Log.e("StoreLendingViewModel", "Error fetching featured apps details", e)
                 // Continue with non-enriched apps
@@ -474,8 +590,8 @@ class StoreLendingViewModel @Inject constructor(
                 // If in favorites mode, search only within favorites
                 if (_lendingUiState.value.isFavoritesMode) {
                     val favoriteApps = apkRepository.getFavoriteAppsNoFlow()
-                    val filteredFavorites = favoriteApps.filter { 
-                        it.name.contains(selectedName, ignoreCase = true) 
+                    val filteredFavorites = favoriteApps.filter {
+                        it.name.contains(selectedName, ignoreCase = true)
                     }
 
                     if (filteredFavorites.isEmpty()) {
@@ -491,18 +607,20 @@ class StoreLendingViewModel @Inject constructor(
                     // Convert to AppItems
                     val appItems = filteredFavorites.map { dbApp ->
                         val installedVersionInfo = try {
-                            val packageInfo = context.packageManager.getPackageInfo(dbApp.packageName, 0)
+                            val packageInfo =
+                                context.packageManager.getPackageInfo(dbApp.packageName, 0)
                             packageInfo.longVersionCode.toInt()
                         } catch (_: PackageManager.NameNotFoundException) {
                             null
                         }
 
                         val latestVersionCode = dbApp.latestVersionCode ?: dbApp.versionCode
-                        val hasUpdate = if (installedVersionInfo != null && latestVersionCode != null) {
-                            installedVersionInfo < latestVersionCode
-                        } else {
-                            false
-                        }
+                        val hasUpdate =
+                            if (installedVersionInfo != null && latestVersionCode != null) {
+                                installedVersionInfo < latestVersionCode
+                            } else {
+                                false
+                            }
 
                         val actualStatus = getAppStatus(dbApp.packageName, hasUpdate)
 
@@ -553,7 +671,7 @@ class StoreLendingViewModel @Inject constructor(
                             // Convert all search results to AppItems
                             // Sort by relevance: exact matches first, then alphabetically
                             val appItems = searchResult.data.map { apkPreview ->
-                                // Check actual app status including database state (REQUESTED, DOWNLOADING, etc.)
+                                // Check actual app status including database state (DOWNLOADING, etc.)
                                 val status = getAppStatus(apkPreview.packageName, hasUpdate = false)
 
                                 AppItem(
@@ -660,7 +778,8 @@ class StoreLendingViewModel @Inject constructor(
                 // Convert to AppItems with actual status
                 val appItems = favoriteApps.map { dbApp ->
                     val installedVersionInfo = try {
-                        val packageInfo = context.packageManager.getPackageInfo(dbApp.packageName, 0)
+                        val packageInfo =
+                            context.packageManager.getPackageInfo(dbApp.packageName, 0)
                         val versionCode = packageInfo.longVersionCode.toInt()
                         versionCode
                     } catch (_: PackageManager.NameNotFoundException) {
@@ -687,7 +806,9 @@ class StoreLendingViewModel @Inject constructor(
                         size = dbApp.size,
                         status = actualStatus,
                         hasUpdate = hasUpdate,
-                        category = if (dbApp.category == "UNKNOWN") "Others" else formatCategoryName(dbApp.category)
+                        category = if (dbApp.category == "UNKNOWN") "Others" else formatCategoryName(
+                            dbApp.category
+                        )
                     )
                 }
 
@@ -734,11 +855,13 @@ class StoreLendingViewModel @Inject constructor(
                     // Show categories list
                     loadCategories()
                 }
+
                 SectionTab.MY_APPS.queryName -> {
                     // Show all installed apps (from Apk Station and other sources)
                     _lendingUiState.update { it.copy(isCategoriesListMode = false) }
                     loadInstalledApps()
                 }
+
                 else -> {
                     // Load apps for the selected section
                     _lendingUiState.update { it.copy(isCategoriesListMode = false) }
@@ -767,7 +890,11 @@ class StoreLendingViewModel @Inject constructor(
                         CategoryInfo(
                             key = key,
                             name = when {
-                                key == "UNKNOWN" || category.name.isBlank() || category.name.equals("Unknown", ignoreCase = true) -> "Others"
+                                key == "UNKNOWN" || category.name.isBlank() || category.name.equals(
+                                    "Unknown",
+                                    ignoreCase = true
+                                ) -> "Others"
+
                                 else -> category.name
                             },
                             count = category.count,
@@ -785,6 +912,7 @@ class StoreLendingViewModel @Inject constructor(
                         )
                     }
                 }
+
                 is Result.Error -> {
                     _lendingUiState.update {
                         it.copy(
@@ -793,6 +921,7 @@ class StoreLendingViewModel @Inject constructor(
                         )
                     }
                 }
+
                 else -> {
                     _lendingUiState.update {
                         it.copy(isLoadingCategories = false)
@@ -810,18 +939,18 @@ class StoreLendingViewModel @Inject constructor(
     fun loadInstalledApps() {
         viewModelScope.launch {
             _lendingUiState.update { it.copy(isLoading = true, errorMessage = null) }
-            
+
             try {
                 // Get all apps from database that were downloaded/installed through Apk Station
                 val dbApps = apkRepository.getAllAppsFromDbNoFlow()
-                
+
                 // Create a map of package names to DBApplication for quick lookup
                 val dbAppsMap = dbApps.associateBy { it.packageName }
-                
+
                 // Get all installed apps from device
                 val packageManager = context.packageManager
                 val installedPackages = packageManager.getInstalledPackages(0)
-                
+
                 // Filter and convert to AppItem
                 val allInstalledApps = installedPackages
                     .filter { it.packageName != BuildConfig.APPLICATION_ID }
@@ -893,15 +1022,15 @@ class StoreLendingViewModel @Inject constructor(
                         isLoading = false
                     )
                 }
-                
+
                 val dbAppCount = allInstalledApps.count { it.uuid != null }
                 val otherAppCount = allInstalledApps.size - dbAppCount
-                
+
                 Log.d(
                     "StoreLendingViewModel",
                     "Loaded ${allInstalledApps.size} total installed apps ($dbAppCount from Apk Station, $otherAppCount from other sources)"
                 )
-                
+
             } catch (e: Exception) {
                 Log.e("StoreLendingViewModel", "Failed to load installed apps", e)
                 _lendingUiState.update {
@@ -967,6 +1096,32 @@ class StoreLendingViewModel @Inject constructor(
      */
     private fun installApp(app: AppItem) {
         viewModelScope.launch {
+            // First check if download is already completed and ready to install
+            val existingDownload = apkRepository.getDownload(app.packageName)
+            
+            if (existingDownload != null && existingDownload.status == DownloadStatus.COMPLETED) {
+                // Download already completed - trigger installation directly
+                // This guarantees app is in foreground (user just clicked button)
+                try {
+                    Log.i("StoreLendingViewModel", "Download already completed for ${app.packageName} - triggering installation")
+                    
+                    // Update download status to INSTALLING in database FIRST
+                    apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.INSTALLING)
+                    
+                    // Immediately update UI to show "Installing..."
+                    updateAppStatus(app.packageName, AppStatus.INSTALLING)
+                    
+                    // Trigger installation
+                    installerManager.getPreferredInstaller().install(existingDownload)
+                } catch (e: Exception) {
+                    Log.e("StoreLendingViewModel", "Failed to trigger installation for ${app.packageName}", e)
+                    _lendingUiState.update { it.copy(errorMessage = "Failed to install: ${e.message}") }
+                    apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.COMPLETED)
+                    updateAppStatus(app.packageName, AppStatus.NOT_INSTALLED)
+                }
+                return@launch
+            }
+            
             if (!_lendingUiState.value.isConnected) {
                 _lendingUiState.update { it.copy(errorMessage = "Network connection unavailable") }
                 return@launch
@@ -987,7 +1142,7 @@ class StoreLendingViewModel @Inject constructor(
                         val apkDetails = result.data
                         val latestVersion = apkDetails.versions.firstOrNull()
 
-                        // Create download entry (URL will be filled by RequestDownloadUrlWorker)
+                        // Create download entry (URL will be filled by DownloadWorker if needed)
                         val download = if (latestVersion != null) {
                             // Use companion method if version info is available
                             Download.fromApkDetails(
@@ -1021,37 +1176,14 @@ class StoreLendingViewModel @Inject constructor(
 
                         // Save to database
                         apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)
-                        apkRepository.saveDownloadToDb(download)
-
-                        // ALWAYS use RequestDownloadUrlWorker to fetch the download URL
-                        // This worker calls /download endpoint and then enqueues DownloadWorker
-                        val sessionId = System.currentTimeMillis()
-                        val requestWorkRequest =
-                            OneTimeWorkRequestBuilder<RequestDownloadUrlWorker>()
-                                .setInputData(
-                                    workDataOf(
-                                        RequestDownloadUrlWorker.KEY_PACKAGE_NAME to app.packageName,
-                                        RequestDownloadUrlWorker.KEY_SESSION_ID to sessionId,
-                                        RequestDownloadUrlWorker.KEY_UUID to uuid,
-                                        RequestDownloadUrlWorker.KEY_VERSION_CODE to (latestVersion?.versionCode ?: -1)
-                                    )
-                                )
-                                .addTag("request_${app.packageName}")
-                                .build()
-
-                        workManager.enqueueUniqueWork(
-                            "request_download_${app.packageName}_session_$sessionId",
-                            ExistingWorkPolicy.REPLACE,
-                            requestWorkRequest
-                        )
-
+                        
+                        // Enqueue download via DownloadHelper - it handles everything
+                        downloadHelper.enqueueDownload(download)
+                        
                         Log.d(
                             "StoreLendingViewModel",
-                            "Enqueued RequestDownloadUrlWorker for ${app.packageName} with versionCode: ${latestVersion?.versionCode ?: -1}"
+                            "Enqueued download for ${app.packageName} via DownloadHelper"
                         )
-
-                        // Monitor the download process
-                        monitorDownloadProgress(app.packageName)
                     }
 
                     is Result.Error -> {
@@ -1076,91 +1208,6 @@ class StoreLendingViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Monitor download progress by polling the database
-     */
-    private fun monitorDownloadProgress(packageName: String) {
-        // Prevent duplicate monitoring
-        synchronized(monitoringPackages) {
-            if (monitoringPackages.contains(packageName)) {
-                return // Already monitoring this package
-            }
-            monitoringPackages.add(packageName)
-        }
-
-        viewModelScope.launch {
-            try {
-                var lastStatus: AppStatus? = null
-
-                while (true) {
-                    delay(500) // Check every 500ms
-
-                    // Check if app is installed (ground truth)
-                    val isInstalled = try {
-                        context.packageManager.getPackageInfo(packageName, 0)
-                        true
-                    } catch (_: PackageManager.NameNotFoundException) {
-                        false
-                    }
-
-                    if (isInstalled) {
-                        // App is installed, clean up and exit
-                        apkRepository.deleteDownload(packageName)
-
-                        // Check if update is available
-                        val dbApp = apkRepository.getAppByPackageName(packageName)
-                        val hasUpdate = dbApp?.hasUpdate ?: false
-                        val status =
-                            if (hasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
-
-                        updateAppStatus(packageName, status, hasUpdate)
-                        break
-                    }
-
-                    // Check download status from database
-                    val download = apkRepository.getDownload(packageName)
-
-                    // If download is null, check if app was marked as REQUESTED
-                    if (download == null) {
-                        val dbApp = apkRepository.getAppByPackageName(packageName)
-                        if (dbApp?.status == AppStatus.REQUESTED) {
-                            Log.i(
-                                "StoreLendingViewModel",
-                                "App $packageName marked as REQUESTED - stopping monitoring"
-                            )
-                            updateAppStatus(packageName, AppStatus.REQUESTED)
-                        }
-                        break
-                    }
-
-                    val newStatus = when (download.status) {
-                        DownloadStatus.DOWNLOADING -> AppStatus.DOWNLOADING
-                        DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
-                        DownloadStatus.INSTALLING -> AppStatus.INSTALLING
-                        DownloadStatus.FAILED -> AppStatus.NOT_INSTALLED
-                        DownloadStatus.CANCELLED -> AppStatus.NOT_INSTALLED
-                        else -> null
-                    }
-
-                    if (newStatus != null && newStatus != lastStatus) {
-                        updateAppStatus(packageName, newStatus)
-                        lastStatus = newStatus
-
-                        // Exit if failed or cancelled
-                        if (newStatus == AppStatus.NOT_INSTALLED) {
-                            apkRepository.deleteDownload(packageName)
-                            break
-                        }
-                    }
-                }
-            } finally {
-                // Remove from monitoring set when done
-                synchronized(monitoringPackages) {
-                    monitoringPackages.remove(packageName)
-                }
-            }
-        }
-    }
 
     /**
      * Cancel app download
@@ -1168,15 +1215,9 @@ class StoreLendingViewModel @Inject constructor(
     private fun cancelAppDownload(app: AppItem) {
         viewModelScope.launch {
             try {
-                // Cancel the WorkManager task
-                workManager.cancelUniqueWork("download_${app.packageName}")
-
-                // Delete download from database
-                apkRepository.deleteDownload(app.packageName)
-
-                // Update UI
-                updateAppStatus(app.packageName, AppStatus.NOT_INSTALLED)
-
+                // Cancel via DownloadHelper - it handles everything
+                downloadHelper.cancel(app.packageName)
+                
                 _lendingUiState.update { it.copy(errorMessage = "Download cancelled") }
             } catch (e: Exception) {
                 _lendingUiState.update { it.copy(errorMessage = "Failed to cancel download: ${e.message}") }
@@ -1185,7 +1226,7 @@ class StoreLendingViewModel @Inject constructor(
     }
 
     /**
-     * Helper function to update a specific app's status in the UI
+     * Helper function to update a specific app's status in the UI and cache
      */
     private fun updateAppStatus(
         packageName: String,
@@ -1217,6 +1258,9 @@ class StoreLendingViewModel @Inject constructor(
                 app
             }
         }
+
+        // Update the cache so it stays in sync
+        sectionCache.updateAppStatus(packageName, newStatus, hasUpdate)
     }
 
     /**
@@ -1226,38 +1270,51 @@ class StoreLendingViewModel @Inject constructor(
     fun updateConnectivityStatus(isConnected: Boolean) {
         viewModelScope.launch {
             val wasDisconnected = !_lendingUiState.value.isConnected
-            Log.d("StoreLendingViewModel", "Connectivity status updated: isConnected=$isConnected, wasDisconnected=$wasDisconnected")
-            
-            _lendingUiState.update { 
+            Log.d(
+                "StoreLendingViewModel",
+                "Connectivity status updated: isConnected=$isConnected, wasDisconnected=$wasDisconnected"
+            )
+
+            _lendingUiState.update {
                 it.copy(
                     isConnected = isConnected,
                     // Show alert when connection is lost, hide when restored
                     showNetworkAlert = !isConnected
-                ) 
+                )
             }
-            
-            Log.d("StoreLendingViewModel", "UI State after update: isConnected=${_lendingUiState.value.isConnected}, showNetworkAlert=${_lendingUiState.value.showNetworkAlert}")
-            
+
+            Log.d(
+                "StoreLendingViewModel",
+                "UI State after update: isConnected=${_lendingUiState.value.isConnected}, showNetworkAlert=${_lendingUiState.value.showNetworkAlert}"
+            )
+
             // Auto-reload content when connection is restored (was disconnected, now connected)
             if (wasDisconnected && isConnected) {
                 Log.d("StoreLendingViewModel", "Connection restored - auto-reloading content")
-                
+
                 // Reload based on current mode
                 when {
                     _lendingUiState.value.isCategoriesListMode -> {
                         Log.d("StoreLendingViewModel", "Reloading categories")
                         loadCategories()
                     }
+
                     _lendingUiState.value.isSearchMode && _lendingUiState.value.hasExecutedSearch -> {
-                        Log.d("StoreLendingViewModel", "Re-executing search: ${_lendingUiState.value.searchQuery}")
+                        Log.d(
+                            "StoreLendingViewModel",
+                            "Re-executing search: ${_lendingUiState.value.searchQuery}"
+                        )
                         executeSearch(_lendingUiState.value.searchQuery)
                     }
+
                     _lendingUiState.value.isFavoritesMode -> {
                         Log.d("StoreLendingViewModel", "Reloading favorites")
                         enterFavoritesMode()
                     }
+
                     else -> {
-                        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+                        val section =
+                            _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
                         Log.d("StoreLendingViewModel", "Reloading section: $section")
                         retrieveAvailableAppsList(sort = section, isRefresh = true)
                     }
@@ -1271,11 +1328,11 @@ class StoreLendingViewModel @Inject constructor(
      */
     fun showNetworkError() {
         viewModelScope.launch {
-            _lendingUiState.update { 
+            _lendingUiState.update {
                 it.copy(
                     errorMessage = "Network connection unavailable",
                     showNetworkAlert = true
-                ) 
+                )
             }
         }
     }
@@ -1298,28 +1355,32 @@ class StoreLendingViewModel @Inject constructor(
             if (_lendingUiState.value.isConnected) {
                 // Connection is available, dismiss alert and reload
                 _lendingUiState.update { it.copy(showNetworkAlert = false) }
-                
+
                 when {
                     _lendingUiState.value.isCategoriesListMode -> {
                         loadCategories()
                     }
+
                     _lendingUiState.value.isSearchMode && _lendingUiState.value.hasExecutedSearch -> {
                         executeSearch(_lendingUiState.value.searchQuery)
                     }
+
                     _lendingUiState.value.isFavoritesMode -> {
                         enterFavoritesMode()
                     }
+
                     else -> {
-                        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
+                        val section =
+                            _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
                         retrieveAvailableAppsList(sort = section, isRefresh = true)
                     }
                 }
             } else {
                 // Still no connection, show error
-                _lendingUiState.update { 
+                _lendingUiState.update {
                     it.copy(
                         errorMessage = "Still no internet connection. Please check your network settings."
-                    ) 
+                    )
                 }
             }
         }
@@ -1329,7 +1390,7 @@ class StoreLendingViewModel @Inject constructor(
      * Get actual app status by checking:
      * 1. If app is installed on device (ground truth)
      * 2. If there's an active download
-     * 3. If app is in REQUESTED state (from database)
+     * 3. If app has special status in database (UNAVAILABLE)
      */
     private suspend fun getAppStatus(packageName: String, hasUpdate: Boolean = false): AppStatus {
         // Check if app is actually installed first (ground truth)
@@ -1361,6 +1422,13 @@ class StoreLendingViewModel @Inject constructor(
                 DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
 
                 DownloadStatus.INSTALLING -> AppStatus.INSTALLING
+                
+                DownloadStatus.COMPLETED -> {
+                    // Download completed and ready to install
+                    // Show Install button (file will be reused when user clicks)
+                    AppStatus.NOT_INSTALLED
+                }
+                
                 DownloadStatus.FAILED,
                 DownloadStatus.CANCELLED -> {
                     // Failed/cancelled downloads should be cleaned up
@@ -1372,10 +1440,9 @@ class StoreLendingViewModel @Inject constructor(
             }
         }
 
-        // Check database for special statuses (REQUESTED, UNAVAILABLE)
+        // Check database for special statuses (UNAVAILABLE)
         val dbApp = apkRepository.getAppByPackageName(packageName)
         return when (dbApp?.status) {
-            AppStatus.REQUESTED -> AppStatus.REQUESTED
             AppStatus.UNAVAILABLE -> AppStatus.UNAVAILABLE
             else -> {
                 // No special status, no download, not installed
@@ -1384,56 +1451,6 @@ class StoreLendingViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Clean up stale downloads that might be stuck in QUEUED/DOWNLOADING/VERIFYING state
-     * This can happen if the app was killed while a download was in progress
-     */
-    private suspend fun cleanupStaleDownloads() {
-        try {
-            // Get all downloads in potentially stale states
-            val allDownloads = apkRepository.getAllDownloads()
-
-            allDownloads.forEach { download ->
-                when (download.status) {
-                    DownloadStatus.QUEUED,
-                    DownloadStatus.DOWNLOADING,
-                    DownloadStatus.DOWNLOADED,
-                    DownloadStatus.VERIFYING -> {
-                        // Check if there's an active worker for this download
-                        val workInfo =
-                            workManager.getWorkInfosForUniqueWork("download_${download.packageName}")
-                                .get()
-
-                        // If no active worker or worker is in terminal state, clean up
-                        val hasActiveWorker = workInfo.any { info ->
-                            info.state == WorkInfo.State.RUNNING ||
-                                    info.state == WorkInfo.State.ENQUEUED
-                        }
-
-                        if (!hasActiveWorker) {
-                            Log.i(
-                                "StoreLendingViewModel",
-                                "Cleaning up stale download for ${download.packageName} with status ${download.status}"
-                            )
-                            apkRepository.deleteDownload(download.packageName)
-                        }
-                    }
-
-                    DownloadStatus.FAILED,
-                    DownloadStatus.CANCELLED -> {
-                        // These should already be cleaned up, but do it anyway
-                        apkRepository.deleteDownload(download.packageName)
-                    }
-
-                    else -> {
-                        // INSTALLING status is ok - it's waiting for user confirmation
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.e("StoreLendingViewModel", "Failed to clean up stale downloads", e)
-        }
-    }
 
     /**
      * Refresh a specific app's status (call this after installation completes)
@@ -1498,9 +1515,7 @@ enum class AppStatus(val status: String) {
     INSTALLED("installed"),
     NOT_INSTALLED("not_installed"),
     UPDATE_AVAILABLE("update_available"),
-    REQUESTING("requesting"), // Currently requesting the app
-    REQUESTED("requested"), // Request completed, waiting for app to be available
-    UNAVAILABLE("unavailable"), // App is not available after 3 retry attempts
+    UNAVAILABLE("unavailable"), // App is not available
     DOWNLOADING("downloading"),
     INSTALLING("installing"),
     UPDATING("updating"),
@@ -1564,13 +1579,13 @@ private class SearchCache(
     fun get(query: String): List<String>? {
         val entry = cache[query] ?: return null
         val currentTime = System.currentTimeMillis()
-        
+
         // Check if entry has expired
         if (currentTime - entry.timestamp > expirationTimeMillis) {
             cache.remove(query)
             return null
         }
-        
+
         return entry.suggestions
     }
 
@@ -1583,7 +1598,7 @@ private class SearchCache(
             val oldestKey = cache.keys.first()
             cache.remove(oldestKey)
         }
-        
+
         cache[query] = CacheEntry(
             suggestions = suggestions,
             timestamp = System.currentTimeMillis()
@@ -1601,10 +1616,10 @@ private class SearchCache(
 /**
  * Cache for section data (BRAX Picks, Top Charts, New Releases)
  * Network-aware: only serves cached data when connected
- * Expires after 10 minutes
+ * Expires after 5 minutes
  */
 private class SectionCache(
-    private val expirationTimeMillis: Long = 10 * 60 * 1000 // 10 minutes
+    private val expirationTimeMillis: Long = 5 * 60 * 1000 // 5 minutes
 ) {
     private data class SectionCacheEntry(
         val apps: List<AppItem>,
@@ -1621,13 +1636,13 @@ private class SectionCache(
     fun get(sectionKey: String): List<AppItem>? {
         val entry = cache[sectionKey] ?: return null
         val currentTime = System.currentTimeMillis()
-        
+
         // Check if entry has expired
         if (currentTime - entry.timestamp > expirationTimeMillis) {
             cache.remove(sectionKey)
             return null
         }
-        
+
         return entry.apps
     }
 
@@ -1656,6 +1671,26 @@ private class SectionCache(
     fun clearSection(sectionKey: String) {
         cache.remove(sectionKey)
     }
+
+    /**
+     * Update a specific app's status in all cached sections
+     */
+    fun updateAppStatus(packageName: String, newStatus: AppStatus, hasUpdate: Boolean? = null) {
+        cache.forEach { (sectionKey, entry) ->
+            val updatedApps = entry.apps.map { app ->
+                if (app.packageName == packageName) {
+                    if (hasUpdate != null) {
+                        app.copy(status = newStatus, hasUpdate = hasUpdate)
+                    } else {
+                        app.copy(status = newStatus)
+                    }
+                } else {
+                    app
+                }
+            }
+            cache[sectionKey] = entry.copy(apps = updatedApps)
+        }
+    }
 }
 
 /**
@@ -1678,13 +1713,13 @@ private class FeaturedAppsDetailsCache(
     fun get(): List<AppItem>? {
         val entry = cache ?: return null
         val currentTime = System.currentTimeMillis()
-        
+
         // Check if entry has expired
         if (currentTime - entry.timestamp > expirationTimeMillis) {
             cache = null
             return null
         }
-        
+
         return entry.appsWithDetails
     }
 

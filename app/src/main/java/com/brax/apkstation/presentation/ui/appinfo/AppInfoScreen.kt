@@ -1,5 +1,7 @@
 package com.brax.apkstation.presentation.ui.appinfo
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.graphics.drawable.Drawable
@@ -60,6 +62,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import com.brax.apkstation.R
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
@@ -81,7 +86,7 @@ fun AppInfoScreen(
 ) {
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
-    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     
     val uiState by viewModel.uiState.collectAsState()
     val favoritesEnabled by viewModel.favoritesEnabled.collectAsState()
@@ -95,8 +100,8 @@ fun AppInfoScreen(
     
     // Listen for installation complete broadcast (both custom and system)
     DisposableEffect("installation_receiver") {
-        val installReceiver = object : android.content.BroadcastReceiver() {
-            override fun onReceive(ctx: android.content.Context?, intent: Intent?) {
+        val installReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
                 Log.d("AppInfoScreen", "Broadcast received! Action: ${intent?.action}")
                 
                 when (intent?.action) {
@@ -122,7 +127,7 @@ fun AppInfoScreen(
                         if (packageName != null) {
                             if (success) {
                                 Log.i("AppInfoScreen", "Calling handleInstallationComplete for $packageName with sessionId: $downloadSessionId")
-                                viewModel.handleInstallationComplete(packageName, downloadSessionId)
+                                viewModel.handleInstallationComplete(packageName)
                             } else {
                                 Log.i("AppInfoScreen", "Calling handleInstallationFailed for $packageName: $errorMessage")
                                 viewModel.handleInstallationFailed(packageName, errorMessage)
@@ -159,7 +164,7 @@ fun AppInfoScreen(
         Log.d("AppInfoScreen", "Registering broadcast receiver for installation events")
         
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(installReceiver, installFilter, android.content.Context.RECEIVER_NOT_EXPORTED)
+            context.registerReceiver(installReceiver, installFilter, Context.RECEIVER_NOT_EXPORTED)
         } else {
             @Suppress("UnspecifiedRegisterReceiverFlag")
             context.registerReceiver(installReceiver, installFilter)
@@ -175,19 +180,13 @@ fun AppInfoScreen(
         }
     }
     
-    // Observe lifecycle to refresh status when returning from uninstall
+    // Observe lifecycle to refresh status when returning to screen
     DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                // Only refresh if NOT currently installing/updating/downloading
-                // (if installing/updating, we're waiting for broadcast confirmation)
-                val currentStatus = uiState.appDetails?.status
-                if (currentStatus != AppStatus.INSTALLING && 
-                    currentStatus != AppStatus.UPDATING && 
-                    currentStatus != AppStatus.DOWNLOADING) {
-                    // Refresh app status when screen resumes (user might have uninstalled)
-                    viewModel.loadAppDetails(uuid)
-                }
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // Always refresh to check for download completion, installation, or uninstallation
+                // The viewModel will handle checking actual status from database/PackageManager
+                viewModel.loadAppDetails(uuid)
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -200,6 +199,8 @@ fun AppInfoScreen(
     LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { message ->
             snackbarHostState.showSnackbar(message)
+            // Clear the error message after showing it
+            viewModel.clearErrorMessage()
         }
     }
     

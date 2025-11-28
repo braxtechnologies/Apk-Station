@@ -7,22 +7,14 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
-import androidx.work.ExistingWorkPolicy
-import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.WorkInfo
-import androidx.work.WorkManager
-import androidx.work.workDataOf
-import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
-import com.brax.apkstation.data.workers.RequestDownloadUrlWorker
 import com.brax.apkstation.presentation.ui.lending.AppItem
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.presentation.ui.navigation.CategoryAppsScreen
 import com.brax.apkstation.utils.Result
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.stateIn
@@ -42,15 +34,12 @@ data class CategoryAppsViewState(
 @HiltViewModel
 class CategoryAppsViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
-    private val workManager: WorkManager,
+    private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
     @param:ApplicationContext private val context: Context,
     savedStateHandle: SavedStateHandle
 ) : ViewModel() {
 
     private val categoryAppsScreen = savedStateHandle.toRoute<CategoryAppsScreen>()
-    
-    // Track which packages are currently being monitored to prevent duplicates
-    private val monitoringPackages = mutableSetOf<String>()
     
     private val _uiState = MutableStateFlow(
         CategoryAppsViewState(
@@ -72,8 +61,91 @@ class CategoryAppsViewModel @Inject constructor(
 
     init {
         loadCategoryApps()
-        // Clean up stale downloads on initialization
-        cleanupStaleDownloads()
+        
+        // Observe installation events for immediate feedback
+        observeInstallationEvents()
+        
+        // Observe download state
+        observeDownloadState()
+        
+        // Observe database changes
+        observeDatabaseChanges()
+    }
+    
+    /**
+     * Observe installer events for immediate UI feedback and errors
+     */
+    private fun observeInstallationEvents() {
+        viewModelScope.launch {
+            com.brax.apkstation.app.android.StoreApplication.events.installerEvent.collect { event ->
+                when (event) {
+                    is com.brax.apkstation.data.event.InstallerEvent.Installing -> {
+                        updateAppStatus(event.packageName, AppStatus.INSTALLING)
+                    }
+                    is com.brax.apkstation.data.event.InstallerEvent.Failed -> {
+                        // Refresh status from PackageManager/DB and show error
+                        val dbApp = apkRepository.getAppByPackageName(event.packageName)
+                        val status = if (dbApp != null) dbApp.status else AppStatus.NOT_INSTALLED
+                        updateAppStatus(event.packageName, status)
+                        _uiState.update { it.copy(errorMessage = event.error) }
+                    }
+                    // Installed/Uninstalled handled by database observation
+                    else -> {}
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe database changes for app installations/uninstallations
+     * Room automatically notifies this Flow when AppStatusHelper updates the DB
+     */
+    private fun observeDatabaseChanges() {
+        viewModelScope.launch {
+            apkRepository.getAllApplications().collect { dbApps ->
+                // Update status for all apps in our list
+                _uiState.value.apps.forEach { displayedApp ->
+                    val dbApp = dbApps.find { it.packageName == displayedApp.packageName }
+                    
+                    if (dbApp != null) {
+                        // App is in database - use DB status
+                        updateAppStatus(dbApp.packageName, dbApp.status, dbApp.hasUpdate)
+                    } else {
+                        // App was removed from database (uninstalled non-favorite)
+                        // Check actual installation status from PackageManager
+                        val isInstalled = try {
+                            context.packageManager.getPackageInfo(displayedApp.packageName, 0)
+                            true
+                        } catch (e: Exception) {
+                            false
+                        }
+                        val status = if (isInstalled) AppStatus.INSTALLED else AppStatus.NOT_INSTALLED
+                        updateAppStatus(displayedApp.packageName, status, false)
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Observe download state from DownloadHelper
+     */
+    private fun observeDownloadState() {
+        viewModelScope.launch {
+            downloadHelper.downloadsList.collect { downloads ->
+                downloads.forEach { download ->
+                    val status = when (download.status) {
+                        com.brax.apkstation.data.model.DownloadStatus.QUEUED,
+                        com.brax.apkstation.data.model.DownloadStatus.DOWNLOADING,
+                        com.brax.apkstation.data.model.DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
+                        com.brax.apkstation.data.model.DownloadStatus.INSTALLING -> AppStatus.INSTALLING
+                        else -> null
+                    }
+                    
+                    status?.let { updateAppStatus(download.packageName, it) }
+                }
+            }
+        }
     }
 
     fun loadCategoryApps(isRefresh: Boolean = false) {
@@ -110,17 +182,8 @@ class CategoryAppsViewModel @Inject constructor(
                             val isInstalled = installedPackages.contains(apkDto.packageName)
                             
                             val status = when {
-                                appFromDb?.status == AppStatus.DOWNLOADING -> {
-                                    // Resume monitoring if app is downloading
-                                    monitorDownloadProgress(apkDto.packageName)
-                                    AppStatus.DOWNLOADING
-                                }
-                                appFromDb?.status == AppStatus.INSTALLING -> {
-                                    // Resume monitoring if app is installing
-                                    monitorDownloadProgress(apkDto.packageName)
-                                    AppStatus.INSTALLING
-                                }
-                                appFromDb?.status == AppStatus.REQUESTED -> AppStatus.REQUESTED
+                                appFromDb?.status == AppStatus.DOWNLOADING -> AppStatus.DOWNLOADING
+                                appFromDb?.status == AppStatus.INSTALLING -> AppStatus.INSTALLING
                                 appFromDb?.status == AppStatus.UNAVAILABLE -> AppStatus.UNAVAILABLE
                                 isInstalled -> {
                                     try {
@@ -210,15 +273,13 @@ class CategoryAppsViewModel @Inject constructor(
             }
 
             else -> {
-                // Do nothing for INSTALLING, REQUESTED, UNAVAILABLE, etc.
+                // Do nothing for INSTALLING, UNAVAILABLE, etc.
             }
         }
     }
 
     /**
      * Install app - fetch details and enqueue download
-     * Uses UUID if available, otherwise falls back to package name
-     * Handles apps not yet cached (empty versions array) by requesting from external source
      */
     private fun installApp(app: AppItem) {
         viewModelScope.launch {
@@ -226,80 +287,28 @@ class CategoryAppsViewModel @Inject constructor(
                 // Update UI to show downloading
                 updateAppStatus(app.packageName, AppStatus.DOWNLOADING)
 
-                // Fetch full app details to get download URL
-                // Use UUID if not empty/null, otherwise use package name
+                // Fetch full app details
                 val uuid = app.uuid?.takeIf { it.isNotEmpty() }
                 val packageName = if (uuid == null) app.packageName else null
 
                 when (val result = apkRepository.getApkDetails(uuid = uuid, packageName = packageName)) {
                     is Result.Success -> {
                         val apkDetails = result.data
-                        val latestVersion = apkDetails.versions.firstOrNull()
 
-                        // Create download entry (URL will be filled by RequestDownloadUrlWorker)
-                        val download = if (latestVersion != null) {
-                            // Use companion method if version info is available
-                            Download.fromApkDetails(
+                        // Create download entry
+                        val download = Download.fromApkDetails(
                                 apkDetails,
                                 isInstalled = false,
                                 isUpdate = app.hasUpdate
                             )
-                        } else {
-                            // Fallback if no version info (rare case)
-                            Download(
-                                packageName = apkDetails.packageName,
-                                url = null,
-                                version = "Latest",
-                                versionCode = 0,
-                                isInstalled = false,
-                                isUpdate = app.hasUpdate,
-                                displayName = apkDetails.name,
-                                icon = apkDetails.icon,
-                                status = DownloadStatus.QUEUED,
-                                progress = 0,
-                                fileSize = 0L,
-                                speed = 0L,
-                                timeRemaining = 0L,
-                                totalFiles = 1,
-                                fileType = "application/vnd.android.package-archive",
-                                downloadedFiles = 0,
-                                apkLocation = "",
-                                md5 = null
-                            )
-                        }
 
                         // Save to database
                         apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)
-                        apkRepository.saveDownloadToDb(download)
 
-                        // ALWAYS use RequestDownloadUrlWorker to fetch the download URL
-                        // This worker calls /download endpoint and then enqueues DownloadWorker
-                        val sessionId = System.currentTimeMillis()
-                        val requestWorkRequest = OneTimeWorkRequestBuilder<RequestDownloadUrlWorker>()
-                            .setInputData(
-                                workDataOf(
-                                    RequestDownloadUrlWorker.KEY_PACKAGE_NAME to app.packageName,
-                                    RequestDownloadUrlWorker.KEY_SESSION_ID to sessionId,
-                                    RequestDownloadUrlWorker.KEY_UUID to uuid,
-                                    RequestDownloadUrlWorker.KEY_VERSION_CODE to (latestVersion?.versionCode ?: -1)
-                                )
-                            )
-                            .addTag("request_${app.packageName}")
-                            .build()
-
-                        workManager.enqueueUniqueWork(
-                            "request_download_${app.packageName}_session_$sessionId",
-                            ExistingWorkPolicy.REPLACE,
-                            requestWorkRequest
-                        )
-
-                        Log.d(
-                            "CategoryAppsViewModel",
-                            "Enqueued RequestDownloadUrlWorker for ${app.packageName} with versionCode: ${latestVersion?.versionCode ?: -1}"
-                        )
-
-                        // Monitor the download process
-                        monitorDownloadProgress(app.packageName)
+                        // Enqueue download via DownloadHelper - it handles everything
+                        downloadHelper.enqueueDownload(download)
+                        
+                        Log.d("CategoryAppsViewModel", "Enqueued download for ${app.packageName} via DownloadHelper")
                     }
 
                     is Result.Error -> {
@@ -312,7 +321,6 @@ class CategoryAppsViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                // Handle errors during setup
                 Log.e("CategoryAppsViewModel", "Failed to start download for ${app.packageName}", e)
                 updateAppStatus(app.packageName, AppStatus.NOT_INSTALLED)
                 _uiState.update { it.copy(errorMessage = "Failed to start download: ${e.message}") }
@@ -320,115 +328,6 @@ class CategoryAppsViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Monitor download progress by polling the database
-     */
-    private fun monitorDownloadProgress(packageName: String) {
-        // Prevent duplicate monitoring
-        synchronized(monitoringPackages) {
-            if (monitoringPackages.contains(packageName)) {
-                return // Already monitoring this package
-            }
-            monitoringPackages.add(packageName)
-        }
-
-        viewModelScope.launch {
-            try {
-                var lastStatus: AppStatus? = null
-
-                while (true) {
-                    delay(500) // Check every 500ms
-
-                    // Check if app is installed (ground truth)
-                    val isInstalled = try {
-                        context.packageManager.getPackageInfo(packageName, 0)
-                        true
-                    } catch (_: PackageManager.NameNotFoundException) {
-                        false
-                    }
-
-                    if (isInstalled) {
-                        // App is installed, clean up and exit
-                        apkRepository.deleteDownload(packageName)
-
-                        // Check if update is available
-                        val dbApp = apkRepository.getAppByPackageName(packageName)
-                        val hasUpdate = dbApp?.hasUpdate ?: false
-                        val status = if (hasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
-
-                        updateAppStatus(packageName, status, hasUpdate)
-                        break
-                    }
-
-                    // Check download status from database
-                    val download = apkRepository.getDownload(packageName)
-
-                    // If download is null, check if app was marked as REQUESTED
-                    if (download == null) {
-                        val dbApp = apkRepository.getAppByPackageName(packageName)
-                        if (dbApp?.status == AppStatus.REQUESTED) {
-                            Log.i("CategoryAppsViewModel", "App $packageName marked as REQUESTED - stopping monitoring")
-                            updateAppStatus(packageName, AppStatus.REQUESTED)
-                        } else {
-                            // Download entry doesn't exist, mark as not installed
-                            updateAppStatus(packageName, AppStatus.NOT_INSTALLED)
-                        }
-                        break
-                    }
-
-                    // Check if download has a null URL and is in QUEUED state - this means it's waiting for RequestDownloadUrlWorker
-                    if (download.url == null && download.status == DownloadStatus.QUEUED) {
-                        // Check if there's an active RequestDownloadUrlWorker
-                        val requestWorkInfo = workManager.getWorkInfosByTag("request_${packageName}").get()
-                        val hasActiveRequestWorker = requestWorkInfo.any { info ->
-                            info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
-                        }
-                        
-                        if (!hasActiveRequestWorker) {
-                            // No active request worker and no URL - this is a stale/failed request
-                            Log.w("CategoryAppsViewModel", "Download for $packageName has no URL and no active worker - cleaning up")
-                            apkRepository.deleteDownload(packageName)
-                            
-                            // Check if app should be marked as REQUESTED or UNAVAILABLE
-                            val dbApp = apkRepository.getAppByPackageName(packageName)
-                            when (dbApp?.status) {
-                                AppStatus.REQUESTED -> updateAppStatus(packageName, AppStatus.REQUESTED)
-                                AppStatus.UNAVAILABLE -> updateAppStatus(packageName, AppStatus.UNAVAILABLE)
-                                else -> updateAppStatus(packageName, AppStatus.NOT_INSTALLED)
-                            }
-                            break
-                        }
-                        // Otherwise, continue monitoring - worker is active
-                    }
-
-                    val newStatus = when (download.status) {
-                        DownloadStatus.DOWNLOADING -> AppStatus.DOWNLOADING
-                        DownloadStatus.VERIFYING -> AppStatus.DOWNLOADING
-                        DownloadStatus.INSTALLING -> AppStatus.INSTALLING
-                        DownloadStatus.FAILED -> AppStatus.NOT_INSTALLED
-                        DownloadStatus.CANCELLED -> AppStatus.NOT_INSTALLED
-                        else -> null
-                    }
-
-                    if (newStatus != null && newStatus != lastStatus) {
-                        updateAppStatus(packageName, newStatus)
-                        lastStatus = newStatus
-
-                        // Exit if failed or cancelled
-                        if (newStatus == AppStatus.NOT_INSTALLED) {
-                            apkRepository.deleteDownload(packageName)
-                            break
-                        }
-                    }
-                }
-            } finally {
-                // Remove from monitoring set when done
-                synchronized(monitoringPackages) {
-                    monitoringPackages.remove(packageName)
-                }
-            }
-        }
-    }
 
     /**
      * Helper function to update a specific app's status in the UI
@@ -461,14 +360,8 @@ class CategoryAppsViewModel @Inject constructor(
     private fun cancelAppDownload(app: AppItem) {
         viewModelScope.launch {
             try {
-                // Cancel the WorkManager task
-                workManager.cancelUniqueWork("download_${app.packageName}")
-
-                // Delete download from database
-                apkRepository.deleteDownload(app.packageName)
-
-                // Update UI
-                updateAppStatus(app.packageName, AppStatus.NOT_INSTALLED)
+                // Cancel via DownloadHelper - it handles everything
+                downloadHelper.cancel(app.packageName)
 
                 _uiState.update { it.copy(errorMessage = "Download cancelled") }
             } catch (e: Exception) {
@@ -477,58 +370,6 @@ class CategoryAppsViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Clean up stale downloads that might be stuck in QUEUED/DOWNLOADING/VERIFYING state
-     * This can happen if the app was killed while a download was in progress
-     */
-    private fun cleanupStaleDownloads() {
-        viewModelScope.launch {
-            try {
-                // Get all downloads in potentially stale states
-                val allDownloads = apkRepository.getAllDownloads()
-
-                allDownloads.forEach { download ->
-                    when (download.status) {
-                        DownloadStatus.QUEUED,
-                        DownloadStatus.DOWNLOADING,
-                        DownloadStatus.DOWNLOADED,
-                        DownloadStatus.VERIFYING -> {
-                            // Check if there's an active worker for this download
-                            val workInfo = workManager.getWorkInfosForUniqueWork("download_${download.packageName}").get()
-
-                            // If no active worker or worker is in terminal state, clean up
-                            val hasActiveWorker = workInfo.any { info ->
-                                info.state == WorkInfo.State.RUNNING || info.state == WorkInfo.State.ENQUEUED
-                            }
-
-                            if (!hasActiveWorker) {
-                                Log.i(
-                                    "CategoryAppsViewModel",
-                                    "Cleaning up stale download for ${download.packageName} with status ${download.status}"
-                                )
-                                apkRepository.deleteDownload(download.packageName)
-                            } else {
-                                // There's an active worker, resume monitoring
-                                monitorDownloadProgress(download.packageName)
-                            }
-                        }
-
-                        DownloadStatus.FAILED,
-                        DownloadStatus.CANCELLED -> {
-                            // These should already be cleaned up, but do it anyway
-                            apkRepository.deleteDownload(download.packageName)
-                        }
-
-                        else -> {
-                            // INSTALLING status is ok - it's waiting for user confirmation
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("CategoryAppsViewModel", "Failed to clean up stale downloads", e)
-            }
-        }
-    }
 
     fun refreshAppStatus(packageName: String) {
         viewModelScope.launch {

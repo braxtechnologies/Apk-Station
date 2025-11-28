@@ -6,12 +6,17 @@ import android.content.Intent
 import android.content.pm.PackageInfo
 import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Build
 import android.os.Process
 import android.util.Log
+import androidx.core.app.PendingIntentCompat
+import androidx.core.os.HandlerCompat
+import com.brax.apkstation.app.android.StoreApplication
+import com.brax.apkstation.data.event.InstallerEvent
+import com.brax.apkstation.data.installer.base.InstallerBase
+import com.brax.apkstation.data.model.SessionInfo
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
-import com.brax.apkstation.data.room.dao.StoreDao
+import com.brax.apkstation.data.room.entity.Download
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -27,71 +32,193 @@ import javax.inject.Singleton
  */
 @Singleton
 class SessionInstaller @Inject constructor(
-    @param:ApplicationContext private val context: Context,
-    private val storeDao: StoreDao
-) : AppInstaller {
+    @ApplicationContext context: Context
+) : InstallerBase(context)  {
+
+    private val TAG = SessionInstaller::class.java.simpleName
     
-    private val TAG = "SessionInstaller"
+    val currentSessionId: Int?
+        get() = enqueuedSessions.firstOrNull()?.lastOrNull()?.sessionId
+
     private val packageInstaller = context.packageManager.packageInstaller
-    
-    override suspend fun install(packageName: String, sessionId: Long) {
-        withContext(Dispatchers.IO) {
-            try {
-                val download = storeDao.getDownload(packageName)
-                    ?: throw IOException("Download not found for $packageName")
-                
-                val file = File(download.apkLocation)
-                if (!file.exists()) {
-                    throw IOException("APK file not found: ${download.apkLocation}")
+    private val enqueuedSessions = mutableListOf<MutableSet<SessionInfo>>()
+
+    /**
+     * Callback for monitoring session lifecycle
+     */
+    val callback = object : PackageInstaller.SessionCallback() {
+        override fun onCreated(sessionId: Int) {
+            Log.d(TAG, "Session created: $sessionId")
+        }
+
+        override fun onBadgingChanged(sessionId: Int) {
+            Log.d(TAG, "Session badging changed: $sessionId")
+        }
+
+        override fun onActiveChanged(sessionId: Int, active: Boolean) {
+            Log.d(TAG, "Session $sessionId active: $active")
+        }
+
+        override fun onProgressChanged(sessionId: Int, progress: Float) {
+            val packageName = enqueuedSessions
+                .find { set -> set.any { it.sessionId == sessionId } }
+                ?.first()
+                ?.packageName
+
+            if (packageName != null && progress > 0.0) {
+                Log.d(TAG, "Installation progress for $packageName: ${(progress * 100).toInt()}%")
+                StoreApplication.events.send(
+                    InstallerEvent.Installing(
+                        packageName = packageName,
+                        progress = progress
+                    )
+                )
+            }
+        }
+
+        override fun onFinished(sessionId: Int, success: Boolean) {
+            Log.i(TAG, "Session $sessionId finished with success=$success")
+
+            val sessionSet =
+                enqueuedSessions.find { it.any { session -> session.sessionId == sessionId } }
+                    ?: return
+
+            // Find and remove the completed session
+            val sessionToRemove = sessionSet.firstOrNull { it.sessionId == sessionId } ?: return
+            sessionSet.remove(sessionToRemove)
+
+            if (success && sessionSet.isNotEmpty()) {
+                // Proceed with next session (e.g., shared lib)
+                Log.i(TAG, "Proceeding with next session in set")
+                commitInstall(sessionSet.first())
+                return
+            }
+
+            // Remove empty sets
+            val iterator = enqueuedSessions.iterator()
+            while (iterator.hasNext()) {
+                if (iterator.next().isEmpty()) {
+                    iterator.remove()
                 }
-                
-                Log.i(TAG, "Installing $packageName from ${file.absolutePath}, fileType: '${download.fileType}', downloadSessionId: $sessionId")
-                
-                // Determine if file is a bundle or single APK
-                // First check the file type from API
-                val isBundle = when (download.fileType?.lowercase()?.trim()) {
-                    "xapk", "zip" -> {
-                        Log.d(TAG, "File type indicates bundle (XAPK/ZIP)")
-                        true
+            }
+
+            // Proceed with the next available session
+            enqueuedSessions.firstOrNull()?.firstOrNull()?.let {
+                Log.i(TAG, "Starting next queued session for ${it.packageName}")
+                commitInstall(it)
+            }
+        }
+    }
+
+    init {
+        // Register session callback on main thread
+        HandlerCompat.createAsync(android.os.Looper.getMainLooper()).post {
+            packageInstaller.registerSessionCallback(callback)
+        }
+    }
+    
+    override suspend fun install(download: Download) {
+        super.install(download)
+
+        withContext(Dispatchers.IO) {
+            val sessionSet =
+                enqueuedSessions.find { set -> set.any { it.packageName == download.packageName } }
+            
+            if (sessionSet != null) {
+                Log.i(TAG, "${download.packageName} already queued, committing existing session")
+                commitInstall(sessionSet.first())
+            } else {
+                try {
+                    val file = File(download.apkLocation)
+                    if (!file.exists()) {
+                        throw IOException("APK file not found: ${download.apkLocation}")
                     }
-                    "apk", null, "" -> {
-                        // For APK or unknown types, check if it's actually a ZIP/bundle
-                        // by inspecting the file signature
-                        val actuallyIsZip = isZipFile(file)
-                        if (actuallyIsZip) {
-                            Log.i(TAG, "File type says APK but file is actually ZIP/XAPK - treating as bundle")
+                    
+                    Log.i(TAG, "Installing ${download.packageName} from ${file.absolutePath}, fileType: '${download.fileType}'")
+                    
+                    // Determine if file is a bundle or single APK
+                    // First check the file type from API
+                    val isBundle = when (download.fileType?.lowercase()?.trim()) {
+                        "xapk", "zip" -> {
+                            Log.d(TAG, "File type indicates bundle (XAPK/ZIP)")
                             true
-                        } else {
-                            Log.d(TAG, "File type indicates single APK")
-                            false
+                        }
+                        "apk", null, "" -> {
+                            // For APK or unknown types, check if it's actually a ZIP/bundle
+                            // by inspecting the file signature
+                            val actuallyIsZip = isZipFile(file)
+                            if (actuallyIsZip) {
+                                Log.i(TAG, "File type says APK but file is actually ZIP/XAPK - treating as bundle")
+                                true
+                            } else {
+                                Log.d(TAG, "File type indicates single APK")
+                                false
+                            }
+                        }
+                        else -> {
+                            Log.w(TAG, "Unknown file type '${download.fileType}', checking file signature")
+                            isZipFile(file)
                         }
                     }
-                    else -> {
-                        Log.w(TAG, "Unknown file type '${download.fileType}', checking file signature")
-                        isZipFile(file)
+                    
+                    val sessionInfoSet = mutableSetOf<SessionInfo>()
+                    
+                    if (isBundle) {
+                        Log.i(TAG, "Installing as bundle (XAPK/ZIP)")
+                        val sessionId = installBundle(file, download.packageName)
+                        if (sessionId != null) {
+                            sessionInfoSet.add(
+                                SessionInfo(
+                                    sessionId,
+                                    download.packageName,
+                                    download.versionCode.toLong(),
+                                    download.displayName
+                                )
+                            )
+                        }
+                    } else {
+                        Log.i(TAG, "Installing as single APK")
+                        val sessionId = installSingleApk(file, download.packageName)
+                        if (sessionId != null) {
+                            sessionInfoSet.add(
+                                SessionInfo(
+                                    sessionId,
+                                    download.packageName,
+                                    download.versionCode.toLong(),
+                                    download.displayName
+                                )
+                            )
+                        }
                     }
+                    
+                    if (sessionInfoSet.isEmpty()) {
+                        Log.e(TAG, "Failed to create installation session for ${download.packageName}")
+                        postError(
+                            download.packageName,
+                            "Failed to create installation session",
+                            null
+                        )
+                        return@withContext
+                    }
+
+                    // Enqueue and trigger installation
+                    enqueuedSessions.add(sessionInfoSet)
+                    StoreApplication.enqueuedInstalls.add(download.packageName)
+                    commitInstall(sessionInfoSet.first())
+                } catch (e: Exception) {
+                    Log.e(TAG, "Installation failed for ${download.packageName}", e)
+                    postError(download.packageName, e.localizedMessage, e.stackTraceToString())
                 }
-                
-                if (isBundle) {
-                    Log.i(TAG, "Installing as bundle (XAPK/ZIP)")
-                    installBundle(file, packageName, sessionId)
-                } else {
-                    Log.i(TAG, "Installing as single APK")
-                    installSingleApk(file, packageName, sessionId)
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Installation failed for $packageName", e)
-                throw e
             }
         }
     }
     
-    private suspend fun installSingleApk(apkFile: File, packageName: String, downloadSessionId: Long) {
+    private fun installSingleApk(apkFile: File, packageName: String): Int? {
         val sessionParams = createSessionParams(packageName)
         val installSessionId = packageInstaller.createSession(sessionParams)
         val session = packageInstaller.openSession(installSessionId)
         
-        try {
+        return try {
             // Write APK to session
             apkFile.inputStream().use { input ->
                 session.openWrite(packageName, 0, apkFile.length()).use { output ->
@@ -101,21 +228,21 @@ class SessionInstaller @Inject constructor(
             }
             
             Log.i(TAG, "APK written to session $installSessionId")
-            
-            // Commit session
-            commitSession(session, installSessionId, packageName, downloadSessionId)
+            installSessionId
         } catch (e: Exception) {
             session.abandon()
-            throw IOException("Failed to install APK: ${e.message}", e)
+            removeFromInstallQueue(packageName)
+            postError(packageName, e.localizedMessage, e.stackTraceToString())
+            null
         }
     }
     
-    private suspend fun installBundle(bundleFile: File, packageName: String, downloadSessionId: Long) {
+    private fun installBundle(bundleFile: File, packageName: String): Int? {
         // Extract the bundle
         val extractDir = File(bundleFile.parent, "extracted_$packageName")
         extractDir.mkdirs()
         
-        try {
+        return try {
             // Extract all APK files from the bundle
             Log.i(TAG, "Extracting bundle: ${bundleFile.name}")
             
@@ -133,13 +260,14 @@ class SessionInstaller @Inject constructor(
                     Log.w(TAG, "Command-line unzip also failed: ${e2.message}")
                     Log.i(TAG, "Attempting to install as single APK instead")
                     extractDir.deleteRecursively()
-                    installSingleApk(bundleFile, packageName, downloadSessionId)
-                    return
+                    return installSingleApk(bundleFile, packageName)
                 }
             }
             
             if (apkFiles.isEmpty()) {
-                throw IOException("No APK files found in bundle")
+                extractDir.deleteRecursively()
+                postError(packageName, "No APK files found in bundle", null)
+                return null
             }
             
             Log.i(TAG, "Found ${apkFiles.size} APK files in bundle")
@@ -161,19 +289,21 @@ class SessionInstaller @Inject constructor(
                 }
                 
                 Log.i(TAG, "All APKs written to session $sessionId")
-                
-                // Commit session
-                commitSession(session, sessionId, packageName, downloadSessionId)
+                sessionId
             } catch (e: Exception) {
                 session.abandon()
-                throw IOException("Failed to install bundle: ${e.message}", e)
+                removeFromInstallQueue(packageName)
+                postError(packageName, e.localizedMessage, e.stackTraceToString())
+                null
             } finally {
                 // Clean up extracted files
                 extractDir.deleteRecursively()
             }
         } catch (e: Exception) {
             extractDir.deleteRecursively()
-            throw e
+            removeFromInstallQueue(packageName)
+            postError(packageName, e.localizedMessage, e.stackTraceToString())
+            null
         }
     }
     
@@ -435,48 +565,39 @@ class SessionInstaller @Inject constructor(
         }
     }
     
-    private fun commitSession(
-        session: PackageInstaller.Session,
-        sessionId: Int,
-        packageName: String,
-        downloadSessionId: Long
-    ) {
-        val intent = Intent(context, InstallStatusReceiver::class.java).apply {
+    /**
+     * Commit the installation session
+     */
+    private fun commitInstall(sessionInfo: SessionInfo) {
+        try {
+            val session = packageInstaller.openSession(sessionInfo.sessionId)
+            session.commit(getCallBackIntent(sessionInfo)!!.intentSender)
+            session.close()
+            Log.i(TAG, "Session ${sessionInfo.sessionId} committed for ${sessionInfo.packageName}")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error committing session: ${e.message}", e)
+            postError(sessionInfo.packageName, e.localizedMessage, e.stackTraceToString())
+        }
+    }
+
+    /**
+     * Get callback intent for session
+     */
+    private fun getCallBackIntent(sessionInfo: SessionInfo): PendingIntent? {
+        val callBackIntent = Intent(context, InstallStatusReceiver::class.java).apply {
             action = InstallStatusReceiver.ACTION_INSTALL_STATUS
             setPackage(context.packageName)
-            putExtra(InstallStatusReceiver.EXTRA_PACKAGE_NAME, packageName)
-            putExtra(InstallStatusReceiver.EXTRA_SESSION_ID, sessionId)
-            putExtra(InstallStatusReceiver.EXTRA_DOWNLOAD_SESSION_ID, downloadSessionId)
+            putExtra(InstallStatusReceiver.EXTRA_PACKAGE_NAME, sessionInfo.packageName)
+            putExtra(InstallStatusReceiver.EXTRA_SESSION_ID, sessionInfo.sessionId)
+            putExtra(InstallStatusReceiver.EXTRA_VERSION_CODE, sessionInfo.versionCode)
         }
-        
-        val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        } else {
-            PendingIntent.FLAG_UPDATE_CURRENT
-        }
-        
-        val pendingIntent = PendingIntent.getBroadcast(
+
+        return PendingIntentCompat.getBroadcast(
             context,
-            sessionId,
-            intent,
-            flags
+            sessionInfo.sessionId,
+            callBackIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT,
+            true
         )
-        
-        session.commit(pendingIntent.intentSender)
-        session.close()
-        
-        Log.i(TAG, "Session $sessionId committed for $packageName")
-    }
-    
-    override fun uninstall(packageName: String) {
-        val intent = Intent(Intent.ACTION_DELETE).apply {
-            data = Uri.parse("package:$packageName")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-        }
-        context.startActivity(intent)
-    }
-    
-    override fun isSupported(): Boolean {
-        return true
     }
 }

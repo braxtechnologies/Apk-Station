@@ -10,6 +10,9 @@ import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.getSystemService
+import com.brax.apkstation.app.android.StoreApplication
+import com.brax.apkstation.data.event.InstallerEvent
+import com.brax.apkstation.data.installer.base.InstallerBase
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.room.StoreDatabase
 import dagger.hilt.android.AndroidEntryPoint
@@ -23,6 +26,7 @@ import javax.inject.Inject
 
 /**
  * Receiver for handling installation status callbacks from PackageInstaller
+ * Integrates with event system for reactive updates
  */
 @AndroidEntryPoint
 class InstallStatusReceiver : BroadcastReceiver() {
@@ -39,18 +43,20 @@ class InstallStatusReceiver : BroadcastReceiver() {
         if (intent?.action != ACTION_INSTALL_STATUS) return
         
         val packageName = intent.getStringExtra(EXTRA_PACKAGE_NAME) ?: return
+        val displayName = intent.getStringExtra(EXTRA_DISPLAY_NAME) ?: packageName
+        val versionCode = intent.getLongExtra(EXTRA_VERSION_CODE, -1L)
         val sessionId = intent.getIntExtra(EXTRA_SESSION_ID, -1)
         val downloadSessionId = intent.getLongExtra(EXTRA_DOWNLOAD_SESSION_ID, -1L)
         val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -1)
         val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
         
-        Log.i(TAG, "Installation status for $packageName: status=$status, installSessionId=$sessionId, downloadSessionId=$downloadSessionId, message=$message")
+        Log.i(TAG, "$packageName ($versionCode) sessionId=$sessionId, status=$status, message=$message")
         
         scope.launch {
             try {
                 when (status) {
                     PackageInstaller.STATUS_SUCCESS -> {
-                        handleSuccess(context, packageName, downloadSessionId)
+                        handleSuccess(context, packageName, displayName, downloadSessionId)
                     }
                     
                     PackageInstaller.STATUS_PENDING_USER_ACTION -> {
@@ -58,7 +64,7 @@ class InstallStatusReceiver : BroadcastReceiver() {
                     }
                     
                     else -> {
-                        handleFailure(context, packageName, status, message)
+                        handleFailure(context, packageName, displayName, status, message)
                     }
                 }
             } finally {
@@ -68,16 +74,28 @@ class InstallStatusReceiver : BroadcastReceiver() {
         }
     }
     
-    private suspend fun handleSuccess(context: Context, packageName: String, downloadSessionId: Long) {
-        Log.i(TAG, "Installation successful for $packageName with downloadSessionId: $downloadSessionId")
+    private suspend fun handleSuccess(
+        context: Context, 
+        packageName: String,
+        displayName: String,
+        downloadSessionId: Long
+    ) {
+        Log.i(TAG, "✅ Installation successful for $packageName")
+        
+        // Remove from enqueued installs
+        StoreApplication.enqueuedInstalls.remove(packageName)
         
         // Get download info to check if it was an update
         val storeDao = database.storeDao()
         val download = storeDao.getDownload(packageName)
-        val appName = download?.displayName ?: packageName
+        val appName = download?.displayName ?: displayName
         val wasUpdate = download?.isUpdate == true
         
-        Log.i(TAG, "Installation type for $packageName: wasUpdate=$wasUpdate, appName=$appName")
+        // Notify installation success
+        InstallerBase.notifyInstallation(context, appName, packageName)
+        
+        // Send event
+        StoreApplication.events.send(InstallerEvent.Installed(packageName))
         
         // Update database
         storeDao.deleteDownload(packageName)
@@ -99,11 +117,9 @@ class InstallStatusReceiver : BroadcastReceiver() {
             putExtra(EXTRA_INSTALL_SUCCESS, true)
             putExtra(EXTRA_DOWNLOAD_SESSION_ID, downloadSessionId)
         }
-        Log.i(TAG, "Sending broadcast: $ACTION_INSTALLATION_STATUS_CHANGED for $packageName with sessionId: $downloadSessionId")
         context.sendBroadcast(broadcastIntent)
-        Log.i(TAG, "Broadcast sent successfully")
         
-        // Show success notification with app name and appropriate message
+        // Show success notification
         val title = if (wasUpdate) "Update Complete" else "Installation Complete"
         val message = if (wasUpdate) {
             "$appName updated successfully"
@@ -115,11 +131,14 @@ class InstallStatusReceiver : BroadcastReceiver() {
             context,
             title,
             message,
+            false,
             packageName.hashCode()
         )
     }
     
     private fun handlePendingUserAction(context: Context, originalIntent: Intent) {
+        Log.i(TAG, "⏸️ User action required")
+        
         // User action required, show the confirmation dialog
         val confirmIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             originalIntent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
@@ -137,17 +156,47 @@ class InstallStatusReceiver : BroadcastReceiver() {
     private suspend fun handleFailure(
         context: Context,
         packageName: String,
+        displayName: String,
         status: Int,
         message: String?
     ) {
-        Log.e(TAG, "Installation failed for $packageName: status=$status, message=$message")
+        Log.e(TAG, "❌ Installation failed for $packageName: status=$status, message=$message")
+        
+        // Remove from enqueued installs
+        StoreApplication.enqueuedInstalls.remove(packageName)
+        
+        // Get error message
+        val error = InstallerBase.getErrorString(context, status)
+        
+        // Send event
+        StoreApplication.events.send(
+            InstallerEvent.Failed(
+                packageName,
+                error,
+                message
+            )
+        )
         
         // Update database
         val storeDao = database.storeDao()
-        storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+        val download = storeDao.getDownload(packageName)
         
-        // Get error message
-        val error = getErrorString(context, status, message)
+        // If user cancelled and file still exists, set back to COMPLETED so they can retry
+        // For other failures, check if file exists before marking as FAILED
+        if (download != null && download.apkLocation.isNotEmpty()) {
+            val file = File(download.apkLocation)
+            if (file.exists()) {
+                // File still exists - set back to COMPLETED so user can retry installation
+                Log.i(TAG, "File exists, setting status to COMPLETED for retry")
+                storeDao.updateDownloadStatus(packageName, DownloadStatus.COMPLETED)
+            } else {
+                // File doesn't exist - mark as failed
+                storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+            }
+        } else {
+            // No download entry or location - mark as failed
+            storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+        }
         
         // Broadcast installation failure for UI updates
         val broadcastIntent = Intent(ACTION_INSTALLATION_STATUS_CHANGED).apply {
@@ -155,7 +204,6 @@ class InstallStatusReceiver : BroadcastReceiver() {
             putExtra(EXTRA_INSTALL_SUCCESS, false)
             putExtra(EXTRA_ERROR_MESSAGE, error)
         }
-        Log.i(TAG, "Sending failure broadcast: $ACTION_INSTALLATION_STATUS_CHANGED for $packageName")
         context.sendBroadcast(broadcastIntent)
         
         // Show error notification only if it wasn't cancelled by user
@@ -163,7 +211,8 @@ class InstallStatusReceiver : BroadcastReceiver() {
             showNotification(
                 context,
                 "Installation Failed",
-                error,
+                "$displayName: $error",
+                true,
                 packageName.hashCode()
             )
         } else {
@@ -171,22 +220,11 @@ class InstallStatusReceiver : BroadcastReceiver() {
         }
     }
     
-    private fun getErrorString(context: Context, status: Int, message: String?): String {
-        return when (status) {
-            PackageInstaller.STATUS_FAILURE_ABORTED -> "Installation cancelled by user"
-            PackageInstaller.STATUS_FAILURE_BLOCKED -> "Installation blocked by system"
-            PackageInstaller.STATUS_FAILURE_CONFLICT -> "App conflicts with existing installation"
-            PackageInstaller.STATUS_FAILURE_INCOMPATIBLE -> "App is not compatible with this device"
-            PackageInstaller.STATUS_FAILURE_INVALID -> "Invalid APK file"
-            PackageInstaller.STATUS_FAILURE_STORAGE -> "Insufficient storage space"
-            else -> message ?: "Installation failed (code: $status)"
-        }
-    }
-    
     private fun showNotification(
         context: Context,
         title: String,
         message: String,
+        isError: Boolean = false,
         notificationId: Int
     ) {
         val notificationManager = context.getSystemService<NotificationManager>()
@@ -202,11 +240,17 @@ class InstallStatusReceiver : BroadcastReceiver() {
         }
         notificationManager.createNotificationChannel(channel)
 
+        val smallIcon = if (isError) {
+            android.R.drawable.stat_notify_error
+        } else {
+            com.brax.apkstation.R.drawable.ic_check_circle
+        }
+
         // Build and show notification
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setContentTitle(title)
             .setContentText(message)
-            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setSmallIcon(smallIcon)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
@@ -220,6 +264,8 @@ class InstallStatusReceiver : BroadcastReceiver() {
         const val EXTRA_PACKAGE_NAME = "package_name"
         const val EXTRA_SESSION_ID = "session_id"
         const val EXTRA_DOWNLOAD_SESSION_ID = "download_session_id"
+        const val EXTRA_VERSION_CODE = "version_code"
+        const val EXTRA_DISPLAY_NAME = "display_name"
         const val EXTRA_INSTALL_SUCCESS = "install_success"
         const val EXTRA_ERROR_MESSAGE = "error_message"
     }

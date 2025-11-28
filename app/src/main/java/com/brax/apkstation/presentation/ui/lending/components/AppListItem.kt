@@ -96,8 +96,6 @@ fun AppListItem(
                 val appInfoTextResId = when (app.status) {
                     AppStatus.INSTALLED -> R.string.app_installed
                     AppStatus.UPDATE_AVAILABLE -> R.string.update_available
-                    AppStatus.REQUESTING -> R.string.requesting
-                    AppStatus.REQUESTED -> R.string.requested
                     AppStatus.UNAVAILABLE -> R.string.unavailable
                     AppStatus.DOWNLOADING -> R.string.downloading
                     AppStatus.INSTALLING -> R.string.installing
@@ -111,8 +109,6 @@ fun AppListItem(
                 val textColor = when (app.status) {
                     AppStatus.INSTALLED -> MaterialTheme.colorScheme.primary
                     AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
-                    AppStatus.REQUESTING -> MaterialTheme.colorScheme.tertiary
-                    AppStatus.REQUESTED -> MaterialTheme.colorScheme.onSurfaceVariant
                     AppStatus.UNAVAILABLE -> MaterialTheme.colorScheme.error
                     AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.tertiary
                     AppStatus.INSTALLING -> MaterialTheme.colorScheme.tertiary
@@ -164,8 +160,8 @@ fun AppListItem(
             Spacer(modifier = Modifier.width(12.dp))
 
             // Action button (fixed width for consistency)
-            // Don't show button for REQUESTED and UNAVAILABLE - status text is enough
-            if (app.status != AppStatus.REQUESTED && app.status != AppStatus.UNAVAILABLE) {
+            // Don't show button for UNAVAILABLE - status text is enough
+            if (app.status != AppStatus.UNAVAILABLE) {
                 val buttonTextResId = when (app.status) {
                     AppStatus.INSTALLED -> R.string.open
                     AppStatus.UPDATE_AVAILABLE -> R.string.update
@@ -189,8 +185,8 @@ fun AppListItem(
                 Box(
                     modifier = Modifier.width(90.dp)
                 ) {
-                    // No button for REQUESTING, INSTALLING, UNINSTALLING states - 0
-                    // REQUESTED and UNAVAILABLE are handled by the outer if condition
+                    // No button for INSTALLING, UNINSTALLING states - 0
+                    // UNAVAILABLE is handled by the outer if condition
                     if (buttonTextResId != 0) {
                         ActionButton(
                             buttonTextResId = buttonTextResId,

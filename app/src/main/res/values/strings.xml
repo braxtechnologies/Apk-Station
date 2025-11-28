@@ -39,20 +39,15 @@
 
     <!-- Dialog -->
     <string name="app_unavailable">App Unavailable</string>
-    <string name="app_requested">App Requested</string>
-    <string name="info_dialog_app_restricted_message">This app is being prepared from an external source. It can take 2–3 minutes to become available if it\'s not region restricted. We\'ll automatically download the app when it\'s ready.</string>
     <string name="dialog_app_unavailable_message">This app is restricted and not available. This might be because of region restrictions. Once the app becomes available you\'ll be notified.</string>
 
     <!-- Button -->
-    <string name="requesting">Requesting…</string>
     <string name="downloading">Downloading…</string>
     <string name="installing">Installing…</string>
     <string name="uninstalling">Uninstalling…</string>
-    <string name="requested">Requested</string>
     <string name="unavailable">Unavailable</string>
     <string name="updating">Updating…</string>
     <string name="button_unavailable">Unavailable</string>
-    <string name="button_requested">Requested</string>
     <string name="button_updating">Updating…</string>
 
     <!-- Other -->
@@ -62,5 +57,15 @@
     <string name="no_internet_connection">No internet connection available</string>
     <string name="retry">Retry</string>
     <string name="app_not_supported">This app is not supported by Apk Station</string>
+    
+    <!-- Installer Status -->
+    <string name="installer_status_success">Installation successful</string>
+    <string name="installer_status_user_action">Installation cancelled</string>
+    <string name="installer_status_failure_blocked">Installation blocked</string>
+    <string name="installer_status_failure_conflict">Installation conflict</string>
+    <string name="installer_status_failure_incompatible">App is incompatible</string>
+    <string name="installer_status_failure_invalid">Invalid APK file</string>
+    <string name="installer_status_failure_storage">Insufficient storage</string>
+    <string name="installer_status_failure">Installation failed</string>
 
 </resources>

@@ -31,7 +31,7 @@ data class DBApplication(
     var status: AppStatus = AppStatus.NOT_INSTALLED,
     var latestVersionCode: Int? = null, // Latest available version code from API
     var hasUpdate: Boolean = false, // True if latestVersionCode > installed versionCode
-    var retryCount: Int = 0, // Number of retry attempts for REQUESTED apps
+    var retryCount: Int = 0, // Number of retry attempts for apps
     var isFavorite: Boolean = false // True if user marked this app as favorite
 ) : Parcelable {
 

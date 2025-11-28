@@ -340,8 +340,6 @@ private fun getActionButtonText(status: AppStatus): String {
         AppStatus.UPDATE_AVAILABLE -> "Update"
         AppStatus.DOWNLOADING -> "Cancel"
         AppStatus.INSTALLING -> "Installing..."
-        AppStatus.REQUESTING -> "Requesting..."
-        AppStatus.REQUESTED -> "Requested"
         AppStatus.UNAVAILABLE -> "Unavailable"
         else -> "Install"
     }

@@ -18,6 +18,7 @@ object NotificationHelper {
     
     // Notification channels
     private const val CHANNEL_APP_UPDATES = "app_updates_channel"
+    private const val CHANNEL_INSTALL_STATUS = "install_status_channel"
     
     // Notification IDs
     private const val NOTIFICATION_ID_APP_UPDATES = 1001
@@ -43,8 +44,20 @@ object NotificationHelper {
             enableLights(true)
             enableVibration(true)
         }
+        
+        // Install Status Channel
+        val installStatusChannel = NotificationChannel(
+            CHANNEL_INSTALL_STATUS,
+            "Installation Status",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Notifications about app installation status"
+            enableLights(false)
+            enableVibration(false)
+        }
 
         notificationManager.createNotificationChannel(updatesChannel)
+        notificationManager.createNotificationChannel(installStatusChannel)
     }
     
     /**
@@ -168,6 +181,35 @@ object NotificationHelper {
     fun cancelUpdateNotification(context: Context) {
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.cancel(NOTIFICATION_ID_APP_UPDATES)
+    }
+    
+    /**
+     * Create a notification for successful installation
+     */
+    fun createInstallSuccessNotification(
+        context: Context,
+        appName: String,
+        packageName: String
+    ): android.app.Notification {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        return NotificationCompat.Builder(context, CHANNEL_INSTALL_STATUS)
+            .setSmallIcon(R.drawable.ic_check_circle)
+            .setContentTitle("Installation Successful")
+            .setContentText("$appName has been installed")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
     }
 }
 
