@@ -8,4 +8,5 @@ plugins {
     alias(libs.plugins.orgJlleitschuhGradleKtlint) apply false
     alias(libs.plugins.comGoogleDevtoolsKsp) apply false
     alias(libs.plugins.comGoogleDaggerHiltAndroid) apply false
+    alias(libs.plugins.detekt) apply false
 }

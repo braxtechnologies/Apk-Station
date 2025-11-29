@@ -32,8 +32,7 @@ fun formatFileSize(sizeInBytes: String?): String {
                 String.format("%.2f GB", gb)
             }
         }
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         "Unknown"
     }
 }
-

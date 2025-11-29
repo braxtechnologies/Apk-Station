@@ -7,6 +7,7 @@ import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.event.InstallerEvent
 import com.brax.apkstation.data.room.dao.StoreDao
 import com.brax.apkstation.presentation.ui.lending.AppStatus
+import com.brax.apkstation.utils.CommonUtils.TAG
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
@@ -23,8 +24,6 @@ class AppStatusHelper @Inject constructor(
     @param:ApplicationContext private val context: Context,
     private val storeDao: StoreDao
 ) {
-
-    private val TAG = AppStatusHelper::class.java.simpleName
 
     fun init() {
         observeInstallerEvents()
@@ -68,9 +67,9 @@ class AppStatusHelper @Inject constructor(
                     
                     // Determine status
                     val newStatus = if (stillHasUpdate) {
-                        com.brax.apkstation.presentation.ui.lending.AppStatus.UPDATE_AVAILABLE
+                        AppStatus.UPDATE_AVAILABLE
                     } else {
-                        com.brax.apkstation.presentation.ui.lending.AppStatus.INSTALLED
+                        AppStatus.INSTALLED
                     }
                     
                     // Update database with version info and status in one query
@@ -80,8 +79,6 @@ class AppStatusHelper @Inject constructor(
                         latestVersionCode = app.latestVersionCode ?: 0,
                         hasUpdate = stillHasUpdate
                     )
-                    
-                    Log.i(TAG, "Updated $packageName in DB: status=$newStatus, installedVersion=$installedVersionCode, latestVersion=${app.latestVersionCode}, hasUpdate=$stillHasUpdate")
                 } else {
                     Log.d(TAG, "App $packageName not in database, skipping update")
                 }
@@ -114,11 +111,9 @@ class AppStatusHelper @Inject constructor(
                             latestVersionCode = app.latestVersionCode ?: 0,
                             hasUpdate = false
                         )
-                        Log.i(TAG, "Updated favorited app $packageName to NOT_INSTALLED")
                     } else {
                         // Remove non-favorited apps from database
                         storeDao.deleteApplication(packageName)
-                        Log.i(TAG, "Removed non-favorited app $packageName from database")
                     }
                 }
                 

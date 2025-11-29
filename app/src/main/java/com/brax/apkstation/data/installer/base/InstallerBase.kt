@@ -3,17 +3,14 @@ package com.brax.apkstation.data.installer.base
 import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageInstaller
-import android.net.Uri
 import android.util.Log
-import androidx.core.content.FileProvider
 import androidx.core.content.getSystemService
-import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.R
 import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.event.InstallerEvent
 import com.brax.apkstation.data.room.entity.Download
+import com.brax.apkstation.utils.CommonUtils.TAG
 import com.brax.apkstation.utils.NotificationHelper
-import java.io.File
 
 /**
  * Base class for all installers
@@ -29,8 +26,7 @@ abstract class InstallerBase(protected val context: Context) : IInstaller {
             val notificationManager = context.getSystemService<NotificationManager>()
             val notification = NotificationHelper.createInstallSuccessNotification(
                 context,
-                displayName,
-                packageName
+                displayName
             )
             notificationManager?.notify(packageName.hashCode(), notification)
         }
@@ -56,8 +52,6 @@ abstract class InstallerBase(protected val context: Context) : IInstaller {
             }
         }
     }
-
-    private val TAG = InstallerBase::class.java.simpleName
 
     var download: Download? = null
         protected set
@@ -100,39 +94,5 @@ abstract class InstallerBase(protected val context: Context) : IInstaller {
             )
         )
     }
-
-    /**
-     * Get APK files for a package
-     */
-    protected fun getFiles(packageName: String, downloadLocation: String): List<File> {
-        val downloadFile = File(downloadLocation)
-        
-        if (!downloadFile.exists()) {
-            Log.e(TAG, "Download file does not exist: $downloadLocation")
-            return emptyList()
-        }
-        
-        // If the download location points to a directory, get all APK files in it
-        if (downloadFile.isDirectory) {
-            return downloadFile.listFiles { file -> 
-                file.extension.equals("apk", ignoreCase = true) 
-            }?.toList() ?: emptyList()
-        }
-        
-        // If it's a single file, return it
-        return listOf(downloadFile)
-    }
-
-    /**
-     * Get a content URI for a file
-     */
-    protected fun getUri(file: File): Uri {
-        return FileProvider.getUriForFile(
-            context,
-            "${BuildConfig.APPLICATION_ID}.fileProvider",
-            file
-        )
-    }
 }
-
 

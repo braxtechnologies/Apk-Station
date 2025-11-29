@@ -17,26 +17,26 @@ import com.brax.apkstation.data.installer.base.InstallerBase
 import com.brax.apkstation.data.model.SessionInfo
 import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.data.room.entity.Download
+import com.brax.apkstation.utils.CommonUtils.TAG
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.IOException
 import java.util.zip.ZipEntry
+import java.util.zip.ZipException
+import java.util.zip.ZipFile
 import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
  * Installer using Android's PackageInstaller API
- * Works on Android 5.0+ (API 21+)
  */
 @Singleton
 class SessionInstaller @Inject constructor(
     @ApplicationContext context: Context
 ) : InstallerBase(context)  {
 
-    private val TAG = SessionInstaller::class.java.simpleName
-    
     val currentSessionId: Int?
         get() = enqueuedSessions.firstOrNull()?.lastOrNull()?.sessionId
 
@@ -125,7 +125,6 @@ class SessionInstaller @Inject constructor(
                 enqueuedSessions.find { set -> set.any { it.packageName == download.packageName } }
             
             if (sessionSet != null) {
-                Log.i(TAG, "${download.packageName} already queued, committing existing session")
                 commitInstall(sessionSet.first())
             } else {
                 try {
@@ -133,8 +132,6 @@ class SessionInstaller @Inject constructor(
                     if (!file.exists()) {
                         throw IOException("APK file not found: ${download.apkLocation}")
                     }
-                    
-                    Log.i(TAG, "Installing ${download.packageName} from ${file.absolutePath}, fileType: '${download.fileType}'")
                     
                     // Determine if file is a bundle or single APK
                     // First check the file type from API
@@ -148,7 +145,6 @@ class SessionInstaller @Inject constructor(
                             // by inspecting the file signature
                             val actuallyIsZip = isZipFile(file)
                             if (actuallyIsZip) {
-                                Log.i(TAG, "File type says APK but file is actually ZIP/XAPK - treating as bundle")
                                 true
                             } else {
                                 Log.d(TAG, "File type indicates single APK")
@@ -164,7 +160,6 @@ class SessionInstaller @Inject constructor(
                     val sessionInfoSet = mutableSetOf<SessionInfo>()
                     
                     if (isBundle) {
-                        Log.i(TAG, "Installing as bundle (XAPK/ZIP)")
                         val sessionId = installBundle(file, download.packageName)
                         if (sessionId != null) {
                             sessionInfoSet.add(
@@ -177,7 +172,6 @@ class SessionInstaller @Inject constructor(
                             )
                         }
                     } else {
-                        Log.i(TAG, "Installing as single APK")
                         val sessionId = installSingleApk(file, download.packageName)
                         if (sessionId != null) {
                             sessionInfoSet.add(
@@ -227,7 +221,6 @@ class SessionInstaller @Inject constructor(
                 }
             }
             
-            Log.i(TAG, "APK written to session $installSessionId")
             installSessionId
         } catch (e: Exception) {
             session.abandon()
@@ -237,28 +230,24 @@ class SessionInstaller @Inject constructor(
         }
     }
     
+    @Suppress("NestedBlockDepth") // Complex XAPK/ZIP extraction and installation logic
     private fun installBundle(bundleFile: File, packageName: String): Int? {
         // Extract the bundle
         val extractDir = File(bundleFile.parent, "extracted_$packageName")
         extractDir.mkdirs()
         
         return try {
-            // Extract all APK files from the bundle
-            Log.i(TAG, "Extracting bundle: ${bundleFile.name}")
-            
             // Try to extract, fallback to single APK if it fails
             val apkFiles = try {
                 extractApksFromBundle(bundleFile, extractDir)
             } catch (e: IOException) {
                 // If Java extraction failed, try using unzip command (more lenient)
                 Log.w(TAG, "Java ZIP extraction failed: ${e.message}")
-                Log.i(TAG, "Trying command-line unzip as fallback")
-                
+
                 try {
                     extractWithUnzipCommand(bundleFile, extractDir)
                 } catch (e2: Exception) {
                     Log.w(TAG, "Command-line unzip also failed: ${e2.message}")
-                    Log.i(TAG, "Attempting to install as single APK instead")
                     extractDir.deleteRecursively()
                     return installSingleApk(bundleFile, packageName)
                 }
@@ -269,8 +258,6 @@ class SessionInstaller @Inject constructor(
                 postError(packageName, "No APK files found in bundle", null)
                 return null
             }
-            
-            Log.i(TAG, "Found ${apkFiles.size} APK files in bundle")
             
             // Create session and install all APKs
             val sessionParams = createSessionParams(packageName)
@@ -288,7 +275,6 @@ class SessionInstaller @Inject constructor(
                     }
                 }
                 
-                Log.i(TAG, "All APKs written to session $sessionId")
                 sessionId
             } catch (e: Exception) {
                 session.abandon()
@@ -322,11 +308,12 @@ class SessionInstaller @Inject constructor(
                 buffer[2] == 0x03.toByte() &&
                 buffer[3] == 0x04.toByte()
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             false
         }
     }
     
+    @Suppress("NestedBlockDepth") // Complex ZIP extraction with multiple fallback strategies
     private fun extractApksFromBundle(bundleFile: File, extractDir: File): List<File> {
         val apkFiles = mutableListOf<File>()
         
@@ -334,7 +321,7 @@ class SessionInstaller @Inject constructor(
         // Some ZIP files have invalid entries that cause exceptions
         try {
             // Use RandomAccessFile approach to read ZIP with more control
-            java.util.zip.ZipFile(bundleFile).use { zipFile ->
+            ZipFile(bundleFile).use { zipFile ->
                 val entries = try {
                     zipFile.entries()
                 } catch (e: Exception) {
@@ -343,6 +330,7 @@ class SessionInstaller @Inject constructor(
                 }
                 
                 var validEntryCount = 0
+                @Suppress("LoopWithTooManyJumpStatements") // Complex ZIP extraction requires multiple skip conditions
                 while (entries.hasMoreElements()) {
                     val entry = try {
                         entries.nextElement()
@@ -367,8 +355,6 @@ class SessionInstaller @Inject constructor(
                             continue
                         }
                         
-                        Log.i(TAG, "Found APK in bundle: $entryName")
-                        
                         // Get safe file name
                         val fileName = entryName.substringAfterLast('/').substringAfterLast('\\')
                         if (fileName.isBlank() || fileName.contains("..")) {
@@ -388,7 +374,6 @@ class SessionInstaller @Inject constructor(
                         if (apkFile.exists() && apkFile.length() > 0) {
                             apkFiles.add(apkFile)
                             validEntryCount++
-                            Log.i(TAG, "Extracted APK #$validEntryCount: ${apkFile.name} (${apkFile.length()} bytes)")
                         }
                         
                     } catch (e: Exception) {
@@ -405,7 +390,6 @@ class SessionInstaller @Inject constructor(
             throw IOException("No valid APK files found in bundle")
         }
         
-        Log.i(TAG, "Successfully extracted ${apkFiles.size} APK(s) from bundle")
         return apkFiles
     }
     
@@ -430,7 +414,6 @@ class SessionInstaller @Inject constructor(
                 throw IOException("No APK files found after unzip")
             }
             
-            Log.i(TAG, "Command-line unzip extracted ${apkFiles.size} APK(s)")
             return apkFiles
         } catch (e: Exception) {
             Log.e(TAG, "Command-line unzip failed", e)
@@ -448,7 +431,7 @@ class SessionInstaller @Inject constructor(
                 override fun getNextEntry(): ZipEntry? {
                     return try {
                         super.getNextEntry()
-                    } catch (e: java.util.zip.ZipException) {
+                    } catch (e: ZipException) {
                         if (e.message?.contains("Invalid zip entry path") == true) {
                             // Skip this entry and try the next one
                             Log.w(TAG, "Skipping corrupted entry, attempting next: ${e.message}")
@@ -463,6 +446,7 @@ class SessionInstaller @Inject constructor(
             var entryCount = 0
             var skippedBadEntries = 0
             
+            @Suppress("LoopWithTooManyJumpStatements") // Complex ZIP extraction requires multiple skip conditions
             while (true) {
                 val entry = try {
                     var nextEntry: ZipEntry? = null
@@ -500,8 +484,6 @@ class SessionInstaller @Inject constructor(
                         continue
                     }
                     
-                    Log.i(TAG, "Found APK in stream: $entryName")
-                    
                     val fileName = entryName.substringAfterLast('/').substringAfterLast('\\')
                     if (fileName.isBlank() || fileName.contains("..")) {
                         Log.w(TAG, "Unsafe filename: $entryName")
@@ -516,7 +498,6 @@ class SessionInstaller @Inject constructor(
                     
                     if (apkFile.exists() && apkFile.length() > 0) {
                         apkFiles.add(apkFile)
-                        Log.i(TAG, "Stream extracted: ${apkFile.name} (${apkFile.length()} bytes)")
                     }
                     
                 } catch (e: Exception) {
@@ -529,8 +510,6 @@ class SessionInstaller @Inject constructor(
                     Log.w(TAG, "Failed to close entry: ${e.message}")
                 }
             }
-            
-            Log.i(TAG, "Stream extraction complete: processed $entryCount valid entries, skipped $skippedBadEntries bad entries")
         }
         
         if (apkFiles.isEmpty()) {
@@ -573,7 +552,6 @@ class SessionInstaller @Inject constructor(
             val session = packageInstaller.openSession(sessionInfo.sessionId)
             session.commit(getCallBackIntent(sessionInfo)!!.intentSender)
             session.close()
-            Log.i(TAG, "Session ${sessionInfo.sessionId} committed for ${sessionInfo.packageName}")
         } catch (e: Exception) {
             Log.e(TAG, "Error committing session: ${e.message}", e)
             postError(sessionInfo.packageName, e.localizedMessage, e.stackTraceToString())

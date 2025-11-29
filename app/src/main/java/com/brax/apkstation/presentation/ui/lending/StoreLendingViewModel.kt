@@ -12,6 +12,7 @@ import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.event.InstallerEvent
 import com.brax.apkstation.data.helper.DownloadHelper
+import com.brax.apkstation.data.helper.NetworkMonitor
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
@@ -31,13 +32,15 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@Suppress("MaxLineLength", "LargeClass", "TooManyFunctions")
 @HiltViewModel
 class StoreLendingViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
     private val downloadHelper: DownloadHelper,
     private val installerManager: com.brax.apkstation.data.installer.AppInstallerManager,
-    private val appPreferencesRepository: AppPreferencesRepository,
-    @param:ApplicationContext private val context: Context
+    private val networkMonitor: NetworkMonitor,
+    @param:ApplicationContext private val context: Context,
+    appPreferencesRepository: AppPreferencesRepository
 ) : ViewModel() {
 
     private var allApps = emptyList<AppItem>() // Store all apps
@@ -86,6 +89,9 @@ class StoreLendingViewModel @Inject constructor(
         
         // Observe database changes (Room notifies when AppStatusHelper updates)
         observeDatabaseChanges()
+        
+        // Observe network connectivity changes
+        observeNetworkConnectivity()
     }
     
     /**
@@ -1072,24 +1078,6 @@ class StoreLendingViewModel @Inject constructor(
     }
 
     /**
-     * Update app status in the UI when package is installed/removed
-     * Called by broadcast receiver when system package events occur
-     */
-    fun updateAppInDb(packageName: String, status: AppStatus) {
-        viewModelScope.launch {
-            // If app was installed, check if an update is available
-            if (status == AppStatus.INSTALLED) {
-                val dbApp = apkRepository.getAppByPackageName(packageName)
-                val hasUpdate = dbApp?.hasUpdate ?: false
-                val finalStatus = if (hasUpdate) AppStatus.UPDATE_AVAILABLE else AppStatus.INSTALLED
-                updateAppStatus(packageName, finalStatus, hasUpdate)
-            } else {
-                updateAppStatus(packageName, status)
-            }
-        }
-    }
-
-    /**
      * Install app - fetch details and enqueue download
      * Uses UUID if available, otherwise falls back to package name
      * Handles apps not yet cached (empty versions array) by requesting from external source
@@ -1103,8 +1091,6 @@ class StoreLendingViewModel @Inject constructor(
                 // Download already completed - trigger installation directly
                 // This guarantees app is in foreground (user just clicked button)
                 try {
-                    Log.i("StoreLendingViewModel", "Download already completed for ${app.packageName} - triggering installation")
-                    
                     // Update download status to INSTALLING in database FIRST
                     apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.INSTALLING)
                     
@@ -1264,10 +1250,21 @@ class StoreLendingViewModel @Inject constructor(
     }
 
     /**
+     * Observe network connectivity changes from global NetworkMonitor
+     */
+    private fun observeNetworkConnectivity() {
+        viewModelScope.launch {
+            networkMonitor.isConnected.collect { isConnected ->
+                updateConnectivityStatus(isConnected)
+            }
+        }
+    }
+    
+    /**
      * Handle connectivity changes
      * Automatically reloads content when connection is restored
      */
-    fun updateConnectivityStatus(isConnected: Boolean) {
+    private fun updateConnectivityStatus(isConnected: Boolean) {
         viewModelScope.launch {
             val wasDisconnected = !_lendingUiState.value.isConnected
             Log.d(
@@ -1285,7 +1282,8 @@ class StoreLendingViewModel @Inject constructor(
 
             Log.d(
                 "StoreLendingViewModel",
-                "UI State after update: isConnected=${_lendingUiState.value.isConnected}, showNetworkAlert=${_lendingUiState.value.showNetworkAlert}"
+                "UI State after update: isConnected=${_lendingUiState.value.isConnected}, " +
+                        "showNetworkAlert=${_lendingUiState.value.showNetworkAlert}"
             )
 
             // Auto-reload content when connection is restored (was disconnected, now connected)
@@ -1443,7 +1441,6 @@ class StoreLendingViewModel @Inject constructor(
         // Check database for special statuses (UNAVAILABLE)
         val dbApp = apkRepository.getAppByPackageName(packageName)
         return when (dbApp?.status) {
-            AppStatus.UNAVAILABLE -> AppStatus.UNAVAILABLE
             else -> {
                 // No special status, no download, not installed
                 AppStatus.NOT_INSTALLED
@@ -1515,7 +1512,6 @@ enum class AppStatus(val status: String) {
     INSTALLED("installed"),
     NOT_INSTALLED("not_installed"),
     UPDATE_AVAILABLE("update_available"),
-    UNAVAILABLE("unavailable"), // App is not available
     DOWNLOADING("downloading"),
     INSTALLING("installing"),
     UPDATING("updating"),
@@ -1581,12 +1577,12 @@ private class SearchCache(
         val currentTime = System.currentTimeMillis()
 
         // Check if entry has expired
-        if (currentTime - entry.timestamp > expirationTimeMillis) {
+        return if (currentTime - entry.timestamp > expirationTimeMillis) {
             cache.remove(query)
-            return null
+            null
+        } else {
+            entry.suggestions
         }
-
-        return entry.suggestions
     }
 
     /**
@@ -1638,12 +1634,12 @@ private class SectionCache(
         val currentTime = System.currentTimeMillis()
 
         // Check if entry has expired
-        if (currentTime - entry.timestamp > expirationTimeMillis) {
+        return if (currentTime - entry.timestamp > expirationTimeMillis) {
             cache.remove(sectionKey)
-            return null
+            null
+        } else {
+            entry.apps
         }
-
-        return entry.apps
     }
 
     /**
@@ -1715,12 +1711,12 @@ private class FeaturedAppsDetailsCache(
         val currentTime = System.currentTimeMillis()
 
         // Check if entry has expired
-        if (currentTime - entry.timestamp > expirationTimeMillis) {
+        return if (currentTime - entry.timestamp > expirationTimeMillis) {
             cache = null
-            return null
+            null
+        } else {
+            entry.appsWithDetails
         }
-
-        return entry.appsWithDetails
     }
 
     /**

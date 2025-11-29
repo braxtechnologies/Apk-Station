@@ -25,12 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-data class CategoryItem(
-    val key: String,
-    val name: String,
-    val count: Int
-)
-
 @Composable
 fun CategoriesListScreen(
     categories: List<CategoryItem>,
@@ -136,5 +130,8 @@ private fun CategoryListItem(
     }
 }
 
-
-
+data class CategoryItem(
+    val key: String,
+    val name: String,
+    val count: Int
+)

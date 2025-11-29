@@ -32,8 +32,7 @@ import kotlinx.coroutines.flow.first
 fun AppNavGraph(
     navController: NavHostController = rememberNavController(),
     mainViewModel: MainViewModel = hiltViewModel(),
-    initialAppUuid: String? = null,
-    openLendingScreen: Boolean = false
+    initialAppUuid: String? = null
 ) {
     var startDestination by remember { mutableStateOf<Any?>(null) }
     val navigationActions = remember(navController) {

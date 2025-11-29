@@ -1,7 +1,8 @@
 [versions]
-agp = "8.13.0"
+agp = "8.13.1"
 ksp = "2.2.20-2.0.3"
 kotlin = "2.2.20"
+detekt = "2.0.0-alpha.1"
 coreKtx = "1.17.0"
 hilt = "2.57.2"
 junit = "4.13.2"
@@ -94,3 +95,4 @@ androidxNavigationSafeargsKotlin = { id = "androidx.navigation.safeargs.kotlin",
 orgJlleitschuhGradleKtlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
 comGoogleDevtoolsKsp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 comGoogleDaggerHiltAndroid = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }

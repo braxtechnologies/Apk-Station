@@ -116,7 +116,7 @@ class CategoryAppsViewModel @Inject constructor(
                         val isInstalled = try {
                             context.packageManager.getPackageInfo(displayedApp.packageName, 0)
                             true
-                        } catch (e: Exception) {
+                        } catch (_: Exception) {
                             false
                         }
                         val status = if (isInstalled) AppStatus.INSTALLED else AppStatus.NOT_INSTALLED
@@ -184,7 +184,6 @@ class CategoryAppsViewModel @Inject constructor(
                             val status = when {
                                 appFromDb?.status == AppStatus.DOWNLOADING -> AppStatus.DOWNLOADING
                                 appFromDb?.status == AppStatus.INSTALLING -> AppStatus.INSTALLING
-                                appFromDb?.status == AppStatus.UNAVAILABLE -> AppStatus.UNAVAILABLE
                                 isInstalled -> {
                                     try {
                                         val installedVersion = context.packageManager

@@ -1,11 +1,7 @@
 package com.brax.apkstation.presentation.ui.appinfo
 
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.graphics.drawable.Drawable
-import android.os.Build
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
@@ -67,7 +63,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
 import com.brax.apkstation.R
-import com.brax.apkstation.data.receiver.InstallStatusReceiver
 import com.brax.apkstation.presentation.ui.appinfo.components.AppActionButtons
 import com.brax.apkstation.presentation.ui.appinfo.components.AppHeaderSection
 import com.brax.apkstation.presentation.ui.appinfo.components.AppInfoSection
@@ -76,6 +71,7 @@ import com.brax.apkstation.presentation.ui.appinfo.components.ScreenshotsSection
 import com.brax.apkstation.presentation.ui.appinfo.components.UnsupportedAppAlertBanner
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 
+@Suppress("MaxLineLength")
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppInfoScreen(
@@ -90,94 +86,10 @@ fun AppInfoScreen(
     
     val uiState by viewModel.uiState.collectAsState()
     val favoritesEnabled by viewModel.favoritesEnabled.collectAsState()
-    
-    var isDescriptionExpanded by remember { mutableStateOf(false) }
-    
+
     // Load app details
     LaunchedEffect(uuid) {
         viewModel.loadAppDetails(uuid)
-    }
-    
-    // Listen for installation complete broadcast (both custom and system)
-    DisposableEffect("installation_receiver") {
-        val installReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context?, intent: Intent?) {
-                Log.d("AppInfoScreen", "Broadcast received! Action: ${intent?.action}")
-                
-                when (intent?.action) {
-                    InstallStatusReceiver.ACTION_INSTALLATION_STATUS_CHANGED -> {
-                        // Custom broadcast from our InstallStatusReceiver
-                        val packageName = intent.getStringExtra(
-                            InstallStatusReceiver.EXTRA_PACKAGE_NAME
-                        )
-                        val success = intent.getBooleanExtra(
-                            InstallStatusReceiver.EXTRA_INSTALL_SUCCESS,
-                            false
-                        )
-                        val downloadSessionId = intent.getLongExtra(
-                            InstallStatusReceiver.EXTRA_DOWNLOAD_SESSION_ID,
-                            -1L
-                        )
-                        val errorMessage = intent.getStringExtra(
-                            InstallStatusReceiver.EXTRA_ERROR_MESSAGE
-                        )
-                        
-                        Log.d("AppInfoScreen", "Custom broadcast - Package: $packageName, Success: $success, SessionId: $downloadSessionId, Error: $errorMessage")
-                        
-                        if (packageName != null) {
-                            if (success) {
-                                Log.i("AppInfoScreen", "Calling handleInstallationComplete for $packageName with sessionId: $downloadSessionId")
-                                viewModel.handleInstallationComplete(packageName)
-                            } else {
-                                Log.i("AppInfoScreen", "Calling handleInstallationFailed for $packageName: $errorMessage")
-                                viewModel.handleInstallationFailed(packageName, errorMessage)
-                            }
-                        }
-                    }
-                    
-                    Intent.ACTION_PACKAGE_ADDED,
-                    Intent.ACTION_PACKAGE_REPLACED -> {
-                        // System broadcast as fallback
-                        val packageName = intent.data?.encodedSchemeSpecificPart
-                        Log.d("AppInfoScreen", "System broadcast - Package added/replaced: $packageName")
-                        
-                        val currentStatus = uiState.appDetails?.status
-                        if (packageName != null && 
-                            (currentStatus == AppStatus.INSTALLING || currentStatus == AppStatus.UPDATING)) {
-                            Log.i("AppInfoScreen", "System fallback: Calling handleInstallationComplete for $packageName")
-                            viewModel.handleInstallationComplete(packageName)
-                        }
-                    }
-                }
-            }
-        }
-        
-        val installFilter = IntentFilter().apply {
-            // Listen to our custom broadcast
-            addAction(InstallStatusReceiver.ACTION_INSTALLATION_STATUS_CHANGED)
-            // Also listen to system broadcasts as fallback
-            addAction(Intent.ACTION_PACKAGE_ADDED)
-            addAction(Intent.ACTION_PACKAGE_REPLACED)
-            addDataScheme("package")
-        }
-        
-        Log.d("AppInfoScreen", "Registering broadcast receiver for installation events")
-        
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(installReceiver, installFilter, Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("UnspecifiedRegisterReceiverFlag")
-            context.registerReceiver(installReceiver, installFilter)
-        }
-        
-        onDispose {
-            Log.d("AppInfoScreen", "Unregistering broadcast receiver")
-            try {
-                context.unregisterReceiver(installReceiver)
-            } catch (e: Exception) {
-                Log.e("AppInfoScreen", "Error unregistering receiver", e)
-            }
-        }
     }
     
     // Observe lifecycle to refresh status when returning to screen
@@ -297,7 +209,6 @@ fun AppInfoScreen(
             uiState.isSearchExpanded -> {
                 SearchResultsList(
                     searchResults = uiState.searchResults,
-                    isConnected = uiState.isConnected,
                     onAppClick = { viewModel.loadAppDetails(it) },
                     paddingValues = paddingValues
                 )
@@ -315,49 +226,14 @@ fun AppInfoScreen(
             }
             
             uiState.appDetails != null -> {
-                val isUnsupportedApp = uiState.appDetails!!.uuid == null
-                Log.d("AppInfoScreen", "Showing app details - UUID: ${uiState.appDetails!!.uuid}, isUnsupportedApp: $isUnsupportedApp")
-                
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(paddingValues)
-                ) {
-                    // Show warning banner if app is not available in Apk Station (UUID is null)
-                    UnsupportedAppAlertBanner(
-                        isVisible = isUnsupportedApp
-                    )
-                    
-                    AppDetailsContent(
-                        appDetails = uiState.appDetails!!,
-                        isConnected = uiState.isConnected,
-                        isDescriptionExpanded = isDescriptionExpanded,
-                        onToggleDescription = { isDescriptionExpanded = !isDescriptionExpanded },
-                        onInstallClick = { viewModel.installApp() },
-                        onOpenClick = {
-                            val intent = context.packageManager.getLaunchIntentForPackage(uiState.appDetails!!.packageName)
-                            intent?.let { context.startActivity(it) }
-                        },
-                        onUninstallClick = {
-                            // Launch system uninstall dialog
-                            val uninstallIntent = viewModel.createUninstallIntent()
-                            if (uninstallIntent != null) {
-                                try {
-                                    context.startActivity(uninstallIntent)
-                                } catch (e: Exception) {
-                                    Log.e("AppInfoScreen", "Failed to start uninstall", e)
-                                }
-                            }
-                        },
-                        onCancelClick = { viewModel.cancelDownload() },
-                        onScreenshotClick = { screenshotIndex ->
-                            uiState.appDetails?.images?.takeIf { it.isNotEmpty() }?.let { images ->
-                                onImageClick(images, screenshotIndex)
-                            }
-                        },
-                        paddingValues = PaddingValues(0.dp)
-                    )
-                }
+                SuccessScreen(
+                    uiState.appDetails,
+                    paddingValues,
+                    uiState,
+                    viewModel,
+                    context,
+                    onImageClick
+                )
             }
             
             else -> {
@@ -379,9 +255,62 @@ fun AppInfoScreen(
 }
 
 @Composable
+private fun SuccessScreen(
+    appDetails: AppDetailsData?,
+    paddingValues: PaddingValues,
+    uiState: AppInfoUiState,
+    viewModel: AppInfoViewModel,
+    context: Context,
+    onImageClick: (List<String>, Int) -> Unit
+) {
+    val isUnsupportedApp = appDetails!!.uuid == null
+    var isDescriptionExpanded by remember { mutableStateOf(false) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(paddingValues)
+    ) {
+        // Show warning banner if app is not available in Apk Station (UUID is null)
+        UnsupportedAppAlertBanner(
+            isVisible = isUnsupportedApp
+        )
+
+        AppDetailsContent(
+            appDetails = appDetails,
+            isConnected = uiState.isConnected,
+            isDescriptionExpanded = isDescriptionExpanded,
+            onToggleDescription = { isDescriptionExpanded = !isDescriptionExpanded },
+            onInstallClick = { viewModel.installApp() },
+            onOpenClick = {
+                val intent =
+                    context.packageManager.getLaunchIntentForPackage(appDetails.packageName)
+                intent?.let { context.startActivity(it) }
+            },
+            onUninstallClick = {
+                // Launch system uninstall dialog
+                val uninstallIntent = viewModel.createUninstallIntent()
+                if (uninstallIntent != null) {
+                    try {
+                        context.startActivity(uninstallIntent)
+                    } catch (e: Exception) {
+                        Log.e("AppInfoScreen", "Failed to start uninstall", e)
+                    }
+                }
+            },
+            onCancelClick = { viewModel.cancelDownload() },
+            onScreenshotClick = { screenshotIndex ->
+                appDetails?.images?.takeIf { it.isNotEmpty() }?.let { images ->
+                    onImageClick(images, screenshotIndex)
+                }
+            }
+        )
+    }
+}
+
+@Composable
 private fun SearchResultsList(
     searchResults: List<AppDetailsData>,
-    isConnected: Boolean,
     onAppClick: (String) -> Unit,
     paddingValues: PaddingValues
 ) {
@@ -408,7 +337,6 @@ private fun SearchResultsList(
             items(searchResults, key = { it.packageName }) { app ->
                 SearchResultItem(
                     app = app,
-                    isConnected = isConnected,
                     onClick = { onAppClick(app.packageName) }
                 )
             }
@@ -419,7 +347,6 @@ private fun SearchResultsList(
 @Composable
 private fun SearchResultItem(
     app: AppDetailsData,
-    isConnected: Boolean,
     onClick: () -> Unit
 ) {
     Card(
@@ -483,8 +410,7 @@ private fun AppDetailsContent(
     onOpenClick: () -> Unit,
     onUninstallClick: () -> Unit,
     onCancelClick: () -> Unit,
-    onScreenshotClick: (Int) -> Unit,
-    paddingValues: PaddingValues
+    onScreenshotClick: (Int) -> Unit
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),

@@ -10,6 +10,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.core.app.ActivityCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.brax.apkstation.R
 import com.brax.apkstation.domain.model.Permission
 import com.brax.apkstation.utils.Constants.SHOULD_SHOW_PERMISSION_SCREEN_KEY
 import com.brax.apkstation.utils.preferences.AppPreferencesRepository
@@ -47,8 +48,8 @@ class PermissionViewModel @Inject constructor(
         _permissions.add(
             Permission(
                 id = 1,
-                title = "Installer Permission",
-                description = "Allow installing apps from Apk Station",
+                title = context.getString(R.string.install_permission),
+                description = context.getString(R.string.install_permission_des),
                 granted = context.packageManager.canRequestPackageInstalls(),
                 optional = false
             )
@@ -58,8 +59,8 @@ class PermissionViewModel @Inject constructor(
         _permissions.add(
             Permission(
                 id = 2,
-                title = "Battery optimization",
-                description = "Allow app to run without battery optimization for reliable background downloads",
+                title = context.getString(R.string.battery_optimization),
+                description = context.getString(R.string.battery_optimization_des),
                 granted = pm.isIgnoringBatteryOptimizations(context.packageName),
                 optional = false
             )
@@ -69,8 +70,8 @@ class PermissionViewModel @Inject constructor(
         _permissions.add(
             Permission(
                 id = 3,
-                title = "External Storage Manager",
-                description = "To save downloads (APKs & OBBs), export and import device configs to and from external storage.",
+                title = context.getString(R.string.external_storage_permission),
+                description = context.getString(R.string.external_storage_permission_des),
                 granted = Environment.isExternalStorageManager(),
                 optional = false
             )
@@ -83,8 +84,8 @@ class PermissionViewModel @Inject constructor(
             _permissions.add(
                 Permission(
                     id = 4,
-                    title = "Notifications",
-                    description = "Send notifications regarding installations status",
+                    title = context.getString(R.string.notifications_permission),
+                    description = context.getString(R.string.notifications_permission_des),
                     granted = ActivityCompat.checkSelfPermission(
                         context,
                         Manifest.permission.POST_NOTIFICATIONS

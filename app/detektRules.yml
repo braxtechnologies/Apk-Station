@@ -1,0 +1,42 @@
+exceptions:
+  active: true
+  TooGenericExceptionCaught:
+    active: false
+  TooGenericExceptionThrown:
+    active: false
+
+naming:
+  active: true
+  FunctionNaming:
+    active: false
+
+complexity:
+  active: true
+  LongMethod:
+    active: true
+    allowedLines: 150
+    ignoreAnnotated: ['Composable']
+  CyclomaticComplexMethod:
+    active: true
+    allowedComplexity: 30
+  TooManyFunctions:
+    active: true
+    allowedFunctionsPerFile: 20
+    allowedFunctionsPerClass: 20
+    allowedFunctionsPerInterface: 20
+    allowedFunctionsPerObject: 20
+    allowedFunctionsPerEnum: 20
+
+style:
+  active: true
+  MagicNumber:
+    active: false
+  MaxLineLength:
+    active: true
+    maxLineLength: 160
+  ReturnCount:
+    active: true
+    max: 4
+  ThrowsCount:
+    active: true
+    max: 4

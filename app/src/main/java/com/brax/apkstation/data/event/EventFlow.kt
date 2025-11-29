@@ -1,6 +1,7 @@
 package com.brax.apkstation.data.event
 
 import android.util.Log
+import com.brax.apkstation.utils.CommonUtils.TAG
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import javax.inject.Inject
@@ -11,8 +12,6 @@ import javax.inject.Singleton
  */
 @Singleton
 class EventFlow @Inject constructor() {
-
-    private val TAG = EventFlow::class.java.simpleName
 
     private val _busEvent = MutableSharedFlow<BusEvent>(extraBufferCapacity = 1)
     val busEvent = _busEvent.asSharedFlow()

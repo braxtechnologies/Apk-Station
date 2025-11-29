@@ -6,15 +6,12 @@ import android.content.Intent
 import android.util.Log
 import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.event.InstallerEvent
+import com.brax.apkstation.utils.CommonUtils.TAG
 
 /**
  * Broadcast receiver to handle package installation and uninstallation events
  */
 open class PackageManagerReceiver : BroadcastReceiver() {
-
-    companion object {
-        private val TAG = PackageManagerReceiver::class.java.simpleName
-    }
 
     override fun onReceive(context: Context?, intent: Intent?) {
         if (context == null || intent == null) return
@@ -43,5 +40,7 @@ open class PackageManagerReceiver : BroadcastReceiver() {
         }
     }
 }
+
+
 
 

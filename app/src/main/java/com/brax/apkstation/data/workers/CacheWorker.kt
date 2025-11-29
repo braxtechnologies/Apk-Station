@@ -51,7 +51,6 @@ class CacheWorker @AssistedInject constructor(
          * Cancels automated cache cleanup
          */
         fun cancelAutomatedCacheCleanup(context: Context) {
-            Log.i(TAG, "Cancelling automated cache cleanup")
             WorkManager.getInstance(context).cancelUniqueWork(CACHE_WORKER)
         }
     }
@@ -61,14 +60,12 @@ class CacheWorker @AssistedInject constructor(
      */
     private val cacheDuration = 24.toDuration(DurationUnit.HOURS)
 
+    @Suppress("NestedBlockDepth") // Complex cache cleanup with file iteration
     override suspend fun doWork(): Result {
-        Log.i(TAG, "Starting cache cleanup")
-
         try {
             val downloadDir = File(context.filesDir, "downloads")
             
             if (!downloadDir.exists()) {
-                Log.i(TAG, "Download directory doesn't exist, nothing to clean")
                 return Result.success()
             }
 
@@ -81,7 +78,6 @@ class CacheWorker @AssistedInject constructor(
                     // Delete any stray files
                     if (packageDir.delete()) {
                         deletedFiles++
-                        Log.i(TAG, "Deleted stray file: ${packageDir.name}")
                     }
                     return@forEach
                 }
@@ -91,7 +87,6 @@ class CacheWorker @AssistedInject constructor(
                 if (files.isNullOrEmpty()) {
                     if (packageDir.deleteRecursively()) {
                         deletedDirs++
-                        Log.i(TAG, "Deleted empty directory: ${packageDir.name}")
                     }
                     return@forEach
                 }
@@ -102,13 +97,11 @@ class CacheWorker @AssistedInject constructor(
                         // Always delete .tmp files (incomplete downloads)
                         if (file.delete()) {
                             deletedFiles++
-                            Log.i(TAG, "Deleted temp file: ${file.name}")
                         }
                     } else if (file.isOld()) {
                         // Delete files older than cache duration
                         if (file.delete()) {
                             deletedFiles++
-                            Log.i(TAG, "Deleted old file: ${file.name} (older than ${cacheDuration.inWholeHours}h)")
                         }
                     }
                 }
@@ -117,12 +110,10 @@ class CacheWorker @AssistedInject constructor(
                 if (packageDir.listFiles().isNullOrEmpty()) {
                     if (packageDir.deleteRecursively()) {
                         deletedDirs++
-                        Log.i(TAG, "Deleted now-empty directory: ${packageDir.name}")
                     }
                 }
             }
 
-            Log.i(TAG, "Cache cleanup completed: deleted $deletedFiles files and $deletedDirs directories")
             return Result.success()
         } catch (e: Exception) {
             Log.e(TAG, "Cache cleanup failed", e)
@@ -138,4 +129,3 @@ class CacheWorker @AssistedInject constructor(
         return elapsedTime.toDuration(DurationUnit.MILLISECONDS) > cacheDuration
     }
 }
-

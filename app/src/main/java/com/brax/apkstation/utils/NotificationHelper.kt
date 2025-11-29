@@ -1,13 +1,17 @@
 package com.brax.apkstation.utils
 
+import android.Manifest.permission.POST_NOTIFICATIONS
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.brax.apkstation.R
 import com.brax.apkstation.app.host.MainActivity
 import com.brax.apkstation.data.room.entity.DBApplication
@@ -67,8 +71,6 @@ object NotificationHelper {
      * @param appsWithUpdates List of apps that have updates available
      */
     fun showUpdateNotification(context: Context, appsWithUpdates: List<DBApplication>) {
-        Log.i(TAG, "showUpdateNotification called with ${appsWithUpdates.size} app(s)")
-        
         if (appsWithUpdates.isEmpty()) {
             Log.w(TAG, "appsWithUpdates is empty, returning without showing notification")
             return
@@ -76,21 +78,17 @@ object NotificationHelper {
         
         // Check notification permission (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            val hasPermission = androidx.core.content.ContextCompat.checkSelfPermission(
+            val hasPermission = ContextCompat.checkSelfPermission(
                 context,
-                android.Manifest.permission.POST_NOTIFICATIONS
-            ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                POST_NOTIFICATIONS
+            ) == PackageManager.PERMISSION_GRANTED
             
             if (!hasPermission) {
                 Log.e(TAG, "❌ POST_NOTIFICATIONS permission NOT granted! Notification will not appear.")
                 Log.e(TAG, "Please grant notification permission in Settings -> Apps -> Apk Station -> Notifications")
                 return
-            } else {
-                Log.i(TAG, "✅ POST_NOTIFICATIONS permission granted")
             }
         }
-        
-        Log.i(TAG, "Creating notification for apps: ${appsWithUpdates.map { it.name }}")
         
         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         
@@ -99,8 +97,6 @@ object NotificationHelper {
             Log.e(TAG, "❌ Notifications are disabled for Apk Station in system settings!")
             Log.e(TAG, "Please enable notifications in Settings -> Apps -> Apk Station -> Notifications")
             return
-        } else {
-            Log.i(TAG, "✅ Notifications are enabled in system settings")
         }
         
         val (title, text, intent) = if (appsWithUpdates.size == 1) {
@@ -165,14 +161,7 @@ object NotificationHelper {
             }
             .build()
         
-        // Show notification
-        Log.i(TAG, "Calling notificationManager.notify with ID=$NOTIFICATION_ID_APP_UPDATES")
-        Log.i(TAG, "Notification title: $title")
-        Log.i(TAG, "Notification text: $text")
-        
         notificationManager.notify(NOTIFICATION_ID_APP_UPDATES, notification)
-        
-        Log.i(TAG, "✅ Successfully showed update notification for ${appsWithUpdates.size} app(s)")
     }
     
     /**
@@ -188,9 +177,8 @@ object NotificationHelper {
      */
     fun createInstallSuccessNotification(
         context: Context,
-        appName: String,
-        packageName: String
-    ): android.app.Notification {
+        appName: String
+    ): Notification {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
         }
@@ -212,4 +200,3 @@ object NotificationHelper {
             .build()
     }
 }
-

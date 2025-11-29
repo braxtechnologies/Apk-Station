@@ -33,7 +33,6 @@ import com.brax.apkstation.R
 fun NetworkAlertBanner(
     isVisible: Boolean,
     onRetry: () -> Unit,
-    onDismiss: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Log.d("NetworkAlertBanner", "Banner composable called with isVisible=$isVisible")

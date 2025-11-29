@@ -12,7 +12,10 @@ import androidx.compose.runtime.Immutable
 import androidx.core.net.toUri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.event.InstallerEvent
+import com.brax.apkstation.data.helper.DownloadHelper
+import com.brax.apkstation.data.installer.AppInstallerManager
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.network.dto.ApkDetailsDto
 import com.brax.apkstation.data.repository.ApkRepository
@@ -32,11 +35,12 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@Suppress("TooManyFunctions") // ViewModel naturally has many UI-related functions
 @HiltViewModel
 class AppInfoViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
-    private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
-    private val installerManager: com.brax.apkstation.data.installer.AppInstallerManager,
+    private val downloadHelper: DownloadHelper,
+    private val installerManager: AppInstallerManager,
     appPreferencesRepository: AppPreferencesRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
@@ -79,7 +83,7 @@ class AppInfoViewModel @Inject constructor(
      */
     private fun observeInstallationEvents() {
         viewModelScope.launch {
-            com.brax.apkstation.app.android.StoreApplication.events.installerEvent.collect { event ->
+            StoreApplication.events.installerEvent.collect { event ->
                 val currentPackageName = _uiState.value.appDetails?.packageName ?: return@collect
                 
                 if (event.packageName == currentPackageName) {
@@ -87,11 +91,23 @@ class AppInfoViewModel @Inject constructor(
                         is InstallerEvent.Installing -> {
                             updateAppStatus(AppStatus.INSTALLING)
                         }
+                        
+                        is InstallerEvent.Installed -> {
+                            // Show success message (UI state updated by database observer)
+                            val app = _uiState.value.appDetails
+                            val wasUpdate = app?.hasUpdate == true || app?.status == AppStatus.UPDATING
+                            _uiState.update { state ->
+                                state.copy(
+                                    errorMessage = if (wasUpdate) "Updated successfully!" else "Installation complete!"
+                                )
+                            }
+                        }
 
                         is InstallerEvent.Failed -> {
                             handleInstallationFailed(event.packageName, event.error)
                         }
-                        // Installed/Uninstalled handled by database observation
+                        
+                        // Uninstalled handled by database observation
                         else -> {}
                     }
                 }
@@ -216,7 +232,7 @@ class AppInfoViewModel @Inject constructor(
         networkCallback?.let {
             try {
                 connectivityManager?.unregisterNetworkCallback(it)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Ignore - callback may not be registered
             }
         }
@@ -239,8 +255,6 @@ class AppInfoViewModel @Inject constructor(
                 
                 val actualUuid = if (isUuid) uuid else null
                 val actualPackageName = if (isUuid) packageName else uuid
-                
-                Log.d("AppInfoViewModel", "loadAppDetails - identifier: $uuid, isUuid: $isUuid, actualUuid: $actualUuid, actualPackage: $actualPackageName")
                 
                 // Fetch details from API using UUID (preferred) or package name
                 when (val result = apkRepository.getApkDetails(uuid = actualUuid, packageName = actualPackageName)) {
@@ -278,8 +292,6 @@ class AppInfoViewModel @Inject constructor(
 
                         // Get actual app status (check downloads and installation)
                         val actualStatus = getActualAppStatus(details.packageName, hasUpdate)
-                        Log.i("AppInfoViewModel", "📊 loadAppDetails for ${details.packageName} - actualStatus: $actualStatus")
-
                         val appDetailsData = AppDetailsData(
                             uuid = details.uuid,
                             packageName = details.packageName,
@@ -376,38 +388,29 @@ class AppInfoViewModel @Inject constructor(
     fun installApp() {
         viewModelScope.launch {
             _uiState.value.appDetails?.let { app ->
-                Log.i("AppInfoViewModel", "🚀 installApp() called for ${app.packageName}")
-                
+
                 // First check if download is already completed and ready to install
                 val existingDownload = apkRepository.getDownload(app.packageName)
-                Log.i("AppInfoViewModel", "📦 Existing download status: ${existingDownload?.status}")
-                
-                if (existingDownload != null && existingDownload.status == com.brax.apkstation.data.model.DownloadStatus.COMPLETED) {
-                    Log.i("AppInfoViewModel", "✓ Entering COMPLETED download path")
+
+                if (existingDownload != null && existingDownload.status == DownloadStatus.COMPLETED) {
                     // Download already completed - trigger installation directly
                     // This guarantees app is in foreground (user just clicked button)
                     try {
-                        Log.i("AppInfoViewModel", "Download already completed for ${app.packageName} - triggering installation")
-                        
                         // Update download status to INSTALLING in database - this is awaited
-                        apkRepository.updateDownloadStatus(app.packageName, com.brax.apkstation.data.model.DownloadStatus.INSTALLING)
-                        Log.i("AppInfoViewModel", "✅ Database updated to INSTALLING for ${app.packageName}")
-                        
+                        apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.INSTALLING)
+
                         // Verify it was updated
                         val updatedDownload = apkRepository.getDownload(app.packageName)
-                        Log.i("AppInfoViewModel", "📊 Verified download status: ${updatedDownload?.status}")
-                        
+
                         // Immediately update UI to show "Installing..."
                         val hasUpdate = app.hasUpdate
                         updateAppStatus(if (hasUpdate) AppStatus.UPDATING else AppStatus.INSTALLING)
-                        Log.i("AppInfoViewModel", "✅ UI updated to INSTALLING for ${app.packageName}")
-                        
+
                         // Trigger installation with updated download object
                         installerManager.getPreferredInstaller().install(updatedDownload ?: existingDownload)
                     } catch (e: Exception) {
-                        Log.e("AppInfoViewModel", "Failed to trigger installation for ${app.packageName}", e)
                         _uiState.update { it.copy(errorMessage = "Failed to install: ${e.message}") }
-                        apkRepository.updateDownloadStatus(app.packageName, com.brax.apkstation.data.model.DownloadStatus.COMPLETED)
+                        apkRepository.updateDownloadStatus(app.packageName, DownloadStatus.COMPLETED)
                         updateAppStatus(AppStatus.NOT_INSTALLED)
                     }
                     return@launch
@@ -427,8 +430,6 @@ class AppInfoViewModel @Inject constructor(
                     // Enqueue download via DownloadHelper - it handles everything
                     val download = Download.fromApkDetails(apkDetails, false, app.hasUpdate)
                     downloadHelper.enqueueDownload(download)
-                    
-                    Log.i("AppInfoViewModel", "Enqueued download for ${app.packageName} via DownloadHelper")
                 } catch (e: Exception) {
                     // Handle errors during setup
                     Log.e("AppInfoViewModel", "Failed to start download for ${app.packageName}", e)
@@ -573,42 +574,11 @@ class AppInfoViewModel @Inject constructor(
      * Handle installation complete event from EventFlow
      * Just refresh UI - AppStatusHelper already updated the database
      */
-    fun handleInstallationComplete(packageName: String) {
-        viewModelScope.launch {
-            val app = _uiState.value.appDetails ?: return@launch
-
-            // Remember if this was an update
-            val wasUpdate = app.hasUpdate || app.status == AppStatus.UPDATING
-
-            // Refresh app details from database (AppStatusHelper has updated it)
-            val updatedApp = apkRepository.getAppByPackageName(packageName)
-
-            // Get the newly installed version
-            val installedVersionInfo = getInstalledVersionInfo(packageName)
-            
-            // Calculate actual status
-            val finalStatus = getActualAppStatus(packageName, updatedApp?.hasUpdate ?: false)
-
-            _uiState.update { state ->
-                state.copy(
-                    appDetails = app.copy(
-                        status = finalStatus,
-                        installedVersion = installedVersionInfo?.first,
-                        installedVersionCode = installedVersionInfo?.second,
-                        hasUpdate = updatedApp?.hasUpdate ?: false,
-                        latestVersionCode = updatedApp?.latestVersionCode ?: app.versionCode
-                    ),
-                    errorMessage = if (wasUpdate) "Updated successfully!" else "Installation complete!"
-                )
-            }
-        }
-    }
-
     /**
      * Handle installation failure from EventFlow
      * Just refresh UI state, no database updates needed
      */
-    fun handleInstallationFailed(packageName: String, errorMessage: String?) {
+    private fun handleInstallationFailed(packageName: String, errorMessage: String?) {
         viewModelScope.launch {
             val app = _uiState.value.appDetails ?: return@launch
 
@@ -822,7 +792,6 @@ class AppInfoViewModel @Inject constructor(
 
         // Check for active downloads first (even if app is installed - could be an update)
         val download = apkRepository.getDownload(packageName)
-        Log.i("AppInfoViewModel", "🔍 getActualAppStatus for $packageName - download: ${download?.status}")
         if (download != null) {
             return when (download.status) {
                 DownloadStatus.QUEUED,
@@ -868,7 +837,6 @@ class AppInfoViewModel @Inject constructor(
         // Check database for special statuses (UNAVAILABLE)
         val dbApp = apkRepository.getAppByPackageName(packageName)
         when (dbApp?.status) {
-            AppStatus.UNAVAILABLE -> return AppStatus.UNAVAILABLE
             else -> {
                 // No special status - check installation status
                 if (isInstalled) {
@@ -889,7 +857,7 @@ class AppInfoViewModel @Inject constructor(
         return try {
             context.packageManager.getPackageInfo(packageName, 0)
             AppStatus.INSTALLED
-        } catch (e: PackageManager.NameNotFoundException) {
+        } catch (_: PackageManager.NameNotFoundException) {
             AppStatus.NOT_INSTALLED
         }
     }

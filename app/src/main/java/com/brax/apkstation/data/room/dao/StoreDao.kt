@@ -12,6 +12,7 @@ import com.brax.apkstation.data.room.entity.Download
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 import kotlinx.coroutines.flow.Flow
 
+@Suppress("TooManyFunctions", "MaxLineLength")
 @Dao
 interface StoreDao {
 
@@ -122,5 +123,4 @@ interface StoreDao {
         latestVersionCode: Int, 
         hasUpdate: Boolean
     )
-
 }

@@ -12,7 +12,15 @@
     <string name="action_finish">Continue</string>
     <string name="item_required">Required</string>
     <string name="item_optional">Optional</string>
-    
+    <string name="external_storage_permission_des"><![CDATA[To save downloads (APKs & OBBs), export and import device configs to and from external storage.]]></string>
+    <string name="external_storage_permission">External Storage Manager</string>
+    <string name="battery_optimization_des">Allow app to run without battery optimization for reliable background downloads</string>
+    <string name="battery_optimization">Battery optimization</string>
+    <string name="install_permission_des">Allow installing apps from Apk Station</string>
+    <string name="install_permission">Installer Permission</string>
+    <string name="notifications_permission_des">Send notifications regarding installations status</string>
+    <string name="notifications_permission">Notifications</string>
+
     <!-- Store Lending Screen -->
     <string name="app_name_store">Apk Station</string>
     <string name="search_hint">Search apps…</string>

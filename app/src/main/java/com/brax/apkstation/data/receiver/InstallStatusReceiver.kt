@@ -15,6 +15,7 @@ import com.brax.apkstation.data.event.InstallerEvent
 import com.brax.apkstation.data.installer.base.InstallerBase
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.room.StoreDatabase
+import com.brax.apkstation.utils.CommonUtils.TAG
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,6 +24,8 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.io.File
 import javax.inject.Inject
+
+const val CHANNEL_ID = "install_channel"
 
 /**
  * Receiver for handling installation status callbacks from PackageInstaller
@@ -33,10 +36,7 @@ class InstallStatusReceiver : BroadcastReceiver() {
     
     @Inject
     lateinit var database: StoreDatabase
-    
-    private val TAG = "InstallStatusReceiver"
-    private val CHANNEL_ID = "install_channel"
-    
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     
     override fun onReceive(context: Context, intent: Intent?) {

@@ -8,9 +8,10 @@ import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.brax.apkstation.data.network.dto.ApkVersionDto
 import com.brax.apkstation.data.repository.ApkRepository
-import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.di.NetworkModule
+import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Constants
 import com.brax.apkstation.utils.NotificationHelper
 import com.brax.apkstation.utils.Result
@@ -26,11 +27,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@Suppress("MaxLineLength", "TooManyFunctions")
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
     private val appPreferencesRepository: AppPreferencesRepository,
     private val apkRepository: ApkRepository,
     private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
+    private val updateHelper: com.brax.apkstation.data.helper.UpdateHelper,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -50,6 +53,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch {
             checkNotificationPermission()
             loadFavoritesEnabled()
+            loadAutoUpdateSettings()
         }
     }
     
@@ -143,6 +147,86 @@ class SettingsViewModel @Inject constructor(
             _uiState.value = _uiState.value.copy(favoritesEnabled = enabled)
         }
     }
+    
+    // ========== AUTO-UPDATE SETTINGS ==========
+    
+    private fun loadAutoUpdateSettings() {
+        viewModelScope.launch {
+            // Load all auto-update settings
+            appPreferencesRepository.getPreference(
+                com.brax.apkstation.data.helper.UpdateHelper.PREFERENCE_AUTO_UPDATE_CHECK,
+                true
+            ).collect { enabled ->
+                _uiState.value = _uiState.value.copy(autoUpdateCheckEnabled = enabled)
+            }
+        }
+        
+        viewModelScope.launch {
+            appPreferencesRepository.getPreference(
+                com.brax.apkstation.data.helper.UpdateHelper.PREFERENCE_UPDATE_ONLY_WIFI,
+                true
+            ).collect { wifiOnly ->
+                _uiState.value = _uiState.value.copy(updateOnlyWifi = wifiOnly)
+            }
+        }
+        
+        viewModelScope.launch {
+            appPreferencesRepository.getPreference(
+                com.brax.apkstation.data.helper.UpdateHelper.PREFERENCE_UPDATE_BATTERY_NOT_LOW,
+                true
+            ).collect { batteryNotLow ->
+                _uiState.value = _uiState.value.copy(updateBatteryNotLow = batteryNotLow)
+            }
+        }
+        
+        viewModelScope.launch {
+            appPreferencesRepository.getPreference(
+                com.brax.apkstation.data.helper.UpdateHelper.PREFERENCE_UPDATE_CHECK_INTERVAL,
+                24L
+            ).collect { interval ->
+                _uiState.value = _uiState.value.copy(updateCheckIntervalHours = interval)
+            }
+        }
+    }
+    
+    fun onAutoUpdateCheckToggled(enabled: Boolean) {
+        viewModelScope.launch {
+            appPreferencesRepository.savePreference(
+                com.brax.apkstation.data.helper.UpdateHelper.PREFERENCE_AUTO_UPDATE_CHECK,
+                enabled
+            )
+            _uiState.value = _uiState.value.copy(autoUpdateCheckEnabled = enabled)
+            updateHelper.updateAutomatedCheck()
+        }
+    }
+    
+    fun onUpdateOnlyWifiToggled(enabled: Boolean) {
+        viewModelScope.launch {
+            appPreferencesRepository.savePreference(
+                com.brax.apkstation.data.helper.UpdateHelper.PREFERENCE_UPDATE_ONLY_WIFI,
+                enabled
+            )
+            _uiState.value = _uiState.value.copy(updateOnlyWifi = enabled)
+            // Reschedule with new constraints if auto-update is enabled
+            if (_uiState.value.autoUpdateCheckEnabled) {
+                updateHelper.scheduleAutomatedCheck()
+            }
+        }
+    }
+    
+    fun onUpdateBatteryNotLowToggled(enabled: Boolean) {
+        viewModelScope.launch {
+            appPreferencesRepository.savePreference(
+                com.brax.apkstation.data.helper.UpdateHelper.PREFERENCE_UPDATE_BATTERY_NOT_LOW,
+                enabled
+            )
+            _uiState.value = _uiState.value.copy(updateBatteryNotLow = enabled)
+            // Reschedule with new constraints if auto-update is enabled
+            if (_uiState.value.autoUpdateCheckEnabled) {
+                updateHelper.scheduleAutomatedCheck()
+            }
+        }
+    }
 
     // ========== DEBUG FUNCTIONS ==========
 
@@ -231,7 +315,7 @@ class SettingsViewModel @Inject constructor(
                 val installedVersionCode = try {
                     val packageInfo = context.packageManager.getPackageInfo(signalPackageName, 0)
                     packageInfo.longVersionCode.toInt()
-                } catch (e: PackageManager.NameNotFoundException) {
+                } catch (_: PackageManager.NameNotFoundException) {
                     _debugMessage.emit("❌ Signal not installed. Install it first or use 'Add Signal to DB' button.")
                     return@launch
                 }
@@ -241,51 +325,7 @@ class SettingsViewModel @Inject constructor(
                 
                 when (val result = apkRepository.checkForUpdates(mapOf(signalPackageName to fakeOldVersion))) {
                     is Result.Success -> {
-                        val updatesMap = result.data
-                        
-                        if (updatesMap.containsKey(signalPackageName)) {
-                            val updateInfo = updatesMap[signalPackageName]!!
-                            
-                            // Ensure Signal is in database
-                            var signalApp = apkRepository.getAppByPackageName(signalPackageName)
-                            if (signalApp == null) {
-                                val searchResult = apkRepository.searchApks("signal")
-                                if (searchResult is Result.Success) {
-                                    val signalPreview = searchResult.data.firstOrNull { it.packageName == signalPackageName }
-                                    if (signalPreview != null) {
-                                        // Use UUID if available, otherwise package name
-                                        val uuid = signalPreview.uuid.takeIf { it.isNotEmpty() }
-                                        val packageName = if (uuid == null) signalPreview.packageName else null
-                                        
-                                        val detailsResult = apkRepository.getApkDetails(uuid = uuid, packageName = packageName)
-                                        if (detailsResult is Result.Success) {
-                                            apkRepository.saveApkDetailsToDb(detailsResult.data, AppStatus.INSTALLED)
-                                            signalApp = apkRepository.getAppByPackageName(signalPackageName)
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if (signalApp != null) {
-                                // Mark as having update
-                                apkRepository.updateVersionInfo(
-                                    packageName = signalPackageName,
-                                    latestVersionCode = updateInfo.versionCode,
-                                    hasUpdate = true
-                                )
-                                
-                                // Show notification
-                                val updatedApp = apkRepository.getAppByPackageName(signalPackageName)
-                                if (updatedApp != null) {
-                                    NotificationHelper.showUpdateNotification(context, listOf(updatedApp))
-                                    _debugMessage.emit("✅ Notification sent! Signal v$installedVersionCode → v${updateInfo.versionCode}")
-                                }
-                            } else {
-                                _debugMessage.emit("❌ Could not fetch Signal from API")
-                            }
-                        } else {
-                            _debugMessage.emit("⚠️ Signal is up to date (v$installedVersionCode)")
-                        }
+                        handleSuccessfulResult(result, signalPackageName, installedVersionCode)
                     }
                     is Result.Error -> {
                         _debugMessage.emit("❌ API error: ${result.message}")
@@ -297,6 +337,64 @@ class SettingsViewModel @Inject constructor(
             } catch (e: Exception) {
                 _debugMessage.emit("❌ Error: ${e.message}")
             }
+        }
+    }
+
+    @Suppress("NestedBlockDepth") // Complex debug function with nested version checking
+    private suspend fun handleSuccessfulResult(
+        result: Result.Success<Map<String, ApkVersionDto>>,
+        signalPackageName: String,
+        installedVersionCode: Int
+    ) {
+        val updatesMap = result.data
+
+        if (updatesMap.containsKey(signalPackageName)) {
+            val updateInfo = updatesMap[signalPackageName]!!
+
+            // Ensure Signal is in database
+            var signalApp = apkRepository.getAppByPackageName(signalPackageName)
+            if (signalApp == null) {
+                val searchResult = apkRepository.searchApks("signal")
+                if (searchResult is Result.Success) {
+                    val signalPreview =
+                        searchResult.data.firstOrNull { it.packageName == signalPackageName }
+                    if (signalPreview != null) {
+                        // Use UUID if available, otherwise package name
+                        val uuid = signalPreview.uuid.takeIf { it.isNotEmpty() }
+                        val packageName = if (uuid == null) signalPreview.packageName else null
+
+                        val detailsResult =
+                            apkRepository.getApkDetails(uuid = uuid, packageName = packageName)
+                        if (detailsResult is Result.Success) {
+                            apkRepository.saveApkDetailsToDb(
+                                detailsResult.data,
+                                AppStatus.INSTALLED
+                            )
+                            signalApp = apkRepository.getAppByPackageName(signalPackageName)
+                        }
+                    }
+                }
+            }
+
+            if (signalApp != null) {
+                // Mark as having update
+                apkRepository.updateVersionInfo(
+                    packageName = signalPackageName,
+                    latestVersionCode = updateInfo.versionCode,
+                    hasUpdate = true
+                )
+
+                // Show notification
+                val updatedApp = apkRepository.getAppByPackageName(signalPackageName)
+                if (updatedApp != null) {
+                    NotificationHelper.showUpdateNotification(context, listOf(updatedApp))
+                    _debugMessage.emit("✅ Notification sent! Signal v$installedVersionCode → v${updateInfo.versionCode}")
+                }
+            } else {
+                _debugMessage.emit("❌ Could not fetch Signal from API")
+            }
+        } else {
+            _debugMessage.emit("⚠️ Signal is up to date (v$installedVersionCode)")
         }
     }
 
@@ -377,6 +475,10 @@ data class SettingsUiState(
     val favoritesEnabled: Boolean = false,
     val currentApiUrl: String = "Resolving...",
     val cacheSizeBytes: Long = 0L,
-    val cacheSizeFormatted: String = "0 B"
+    val cacheSizeFormatted: String = "0 B",
+    // Auto-update settings
+    val autoUpdateCheckEnabled: Boolean = true,
+    val updateOnlyWifi: Boolean = true,
+    val updateBatteryNotLow: Boolean = true,
+    val updateCheckIntervalHours: Long = 24L
 )
-

@@ -2,7 +2,6 @@ package com.brax.apkstation.app.android
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.utils.Constants.SHOULD_SHOW_PERMISSION_SCREEN_KEY
 import com.brax.apkstation.utils.preferences.AppPreferencesRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -16,8 +15,7 @@ import javax.inject.Inject
 
 @HiltViewModel
 class MainViewModel @Inject constructor(
-    appPreferences: AppPreferencesRepository,
-    private val apkRepository: ApkRepository
+    appPreferences: AppPreferencesRepository
 ) : ViewModel() {
 
     val shouldShowPermissionScreen = appPreferences.dataStore.data.map {
@@ -35,7 +33,7 @@ class MainViewModel @Inject constructor(
             try {
                 // Minimum splash screen time
                 delay(2000)
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Silent failure - app will attempt enrollment on first API call
             } finally {
                 _isReady.value = true
