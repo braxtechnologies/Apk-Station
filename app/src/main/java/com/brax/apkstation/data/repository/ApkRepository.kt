@@ -159,7 +159,7 @@ class ApkRepository @Inject constructor(
                             Result.Error(errorMsg)
                         }
                         else -> {
-                            val errorMsg = "Enrollment failed: Unexpected response type ${responseData.javaClass.simpleName}"
+                            val errorMsg = "Enrollment failed: Unexpected response type ${responseData?.javaClass?.simpleName}"
                             Log.e("ApkRepository", errorMsg)
                             Result.Error(errorMsg)
                         }
