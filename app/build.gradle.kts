@@ -92,6 +92,13 @@ android {
     }
 }
 
+// Make release builds depend on detekt
+afterEvaluate {
+    tasks.matching { it.name.contains("assembleRelease") || it.name.contains("bundleRelease") }.configureEach {
+        dependsOn("detekt")
+    }
+}
+
 dependencies {
 
     implementation(libs.androidx.core.ktx)
