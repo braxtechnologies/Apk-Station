@@ -82,6 +82,7 @@ class ApkRepository @Inject constructor(
      * This allows re-enrollment if tokens are lost (e.g., after clearing app data).
      * Each enrollment creates a new device entry on the server.
      */
+    @Suppress("NestedBlockDepth") // Complex device enrollment with multiple nested conditions
     suspend fun enrollDevice(): Result<EnrollResponseDto> {
         return try {
             // Get device information
@@ -183,6 +184,7 @@ class ApkRepository @Inject constructor(
     /**
      * Refresh access token using refresh token
      */
+    @Suppress("NestedBlockDepth") // Complex token refresh with multiple nested conditions
     suspend fun refreshAccessToken(): Result<RefreshResponseDto> {
         return try {
             val refreshToken = tokenManager.getRefreshTokenSync()

@@ -115,7 +115,6 @@ private fun RowScope.AppInfo(app: AppItem) {
         val appInfoTextResId = when (app.status) {
             AppStatus.INSTALLED -> R.string.app_installed
             AppStatus.UPDATE_AVAILABLE -> R.string.update_available
-            AppStatus.UNAVAILABLE -> R.string.unavailable
             AppStatus.DOWNLOADING -> R.string.downloading
             AppStatus.INSTALLING -> R.string.installing
             AppStatus.UPDATING -> R.string.updating
@@ -128,7 +127,6 @@ private fun RowScope.AppInfo(app: AppItem) {
         val textColor = when (app.status) {
             AppStatus.INSTALLED -> MaterialTheme.colorScheme.primary
             AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
-            AppStatus.UNAVAILABLE -> MaterialTheme.colorScheme.error
             AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.tertiary
             AppStatus.INSTALLING -> MaterialTheme.colorScheme.tertiary
             AppStatus.UPDATING -> Color(0xFFFF9800) // Orange
@@ -183,41 +181,38 @@ private fun ActionButton(
     isConnected: Boolean,
     onActionClick: () -> Unit
 ) {
-    if (app.status != AppStatus.UNAVAILABLE) {
-        val buttonTextResId = when (app.status) {
-            AppStatus.INSTALLED -> R.string.open
-            AppStatus.UPDATE_AVAILABLE -> R.string.update
-            AppStatus.NOT_INSTALLED -> R.string.install
-            AppStatus.DOWNLOADING -> R.string.action_cancel
+    val buttonTextResId = when (app.status) {
+        AppStatus.INSTALLED -> R.string.open
+        AppStatus.UPDATE_AVAILABLE -> R.string.update
+        AppStatus.NOT_INSTALLED -> R.string.install
+        AppStatus.DOWNLOADING -> R.string.action_cancel
 
-            else -> 0
-        }
+        else -> 0
+    }
 
-        val buttonContainerColor = when (app.status) {
-            AppStatus.INSTALLED -> MaterialTheme.colorScheme.tertiary
-            AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
-            AppStatus.NOT_INSTALLED -> MaterialTheme.colorScheme.primary
-            AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.error
+    val buttonContainerColor = when (app.status) {
+        AppStatus.INSTALLED -> MaterialTheme.colorScheme.tertiary
+        AppStatus.UPDATE_AVAILABLE -> Color(0xFFFF9800) // Orange
+        AppStatus.NOT_INSTALLED -> MaterialTheme.colorScheme.primary
+        AppStatus.DOWNLOADING -> MaterialTheme.colorScheme.error
 
-            else -> MaterialTheme.colorScheme.tertiary
-        }
+        else -> MaterialTheme.colorScheme.tertiary
+    }
 
-        val isTextColorWhite = app.status == AppStatus.UPDATE_AVAILABLE
+    val isTextColorWhite = app.status == AppStatus.UPDATE_AVAILABLE
 
-        Box(
-            modifier = Modifier.width(90.dp)
-        ) {
-            // No button for INSTALLING, UNINSTALLING states - 0
-            // UNAVAILABLE is handled by the outer if condition
-            if (buttonTextResId != 0) {
-                ActionButton(
-                    buttonTextResId = buttonTextResId,
-                    buttonColor = buttonContainerColor,
-                    isConnected = isConnected,
-                    isTextColorWhite = isTextColorWhite,
-                    onActionClick = onActionClick
-                )
-            }
+    Box(
+        modifier = Modifier.width(90.dp)
+    ) {
+        // No button for INSTALLING, UNINSTALLING states - 0
+        if (buttonTextResId != 0) {
+            ActionButton(
+                buttonTextResId = buttonTextResId,
+                buttonColor = buttonContainerColor,
+                isConnected = isConnected,
+                isTextColorWhite = isTextColorWhite,
+                onActionClick = onActionClick
+            )
         }
     }
 }

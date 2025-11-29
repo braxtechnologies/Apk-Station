@@ -230,6 +230,7 @@ class SessionInstaller @Inject constructor(
         }
     }
     
+    @Suppress("NestedBlockDepth") // Complex XAPK/ZIP extraction and installation logic
     private fun installBundle(bundleFile: File, packageName: String): Int? {
         // Extract the bundle
         val extractDir = File(bundleFile.parent, "extracted_$packageName")
@@ -312,6 +313,7 @@ class SessionInstaller @Inject constructor(
         }
     }
     
+    @Suppress("NestedBlockDepth") // Complex ZIP extraction with multiple fallback strategies
     private fun extractApksFromBundle(bundleFile: File, extractDir: File): List<File> {
         val apkFiles = mutableListOf<File>()
         
@@ -328,6 +330,7 @@ class SessionInstaller @Inject constructor(
                 }
                 
                 var validEntryCount = 0
+                @Suppress("LoopWithTooManyJumpStatements") // Complex ZIP extraction requires multiple skip conditions
                 while (entries.hasMoreElements()) {
                     val entry = try {
                         entries.nextElement()
@@ -443,6 +446,7 @@ class SessionInstaller @Inject constructor(
             var entryCount = 0
             var skippedBadEntries = 0
             
+            @Suppress("LoopWithTooManyJumpStatements") // Complex ZIP extraction requires multiple skip conditions
             while (true) {
                 val entry = try {
                     var nextEntry: ZipEntry? = null

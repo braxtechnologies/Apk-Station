@@ -60,6 +60,7 @@ class CacheWorker @AssistedInject constructor(
      */
     private val cacheDuration = 24.toDuration(DurationUnit.HOURS)
 
+    @Suppress("NestedBlockDepth") // Complex cache cleanup with file iteration
     override suspend fun doWork(): Result {
         try {
             val downloadDir = File(context.filesDir, "downloads")

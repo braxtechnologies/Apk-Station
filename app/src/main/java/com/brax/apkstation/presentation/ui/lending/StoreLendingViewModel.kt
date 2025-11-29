@@ -32,7 +32,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-@Suppress("MaxLineLength", "LargeClass")
+@Suppress("MaxLineLength", "LargeClass", "TooManyFunctions")
 @HiltViewModel
 class StoreLendingViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
@@ -1441,7 +1441,6 @@ class StoreLendingViewModel @Inject constructor(
         // Check database for special statuses (UNAVAILABLE)
         val dbApp = apkRepository.getAppByPackageName(packageName)
         return when (dbApp?.status) {
-            AppStatus.UNAVAILABLE -> AppStatus.UNAVAILABLE
             else -> {
                 // No special status, no download, not installed
                 AppStatus.NOT_INSTALLED
@@ -1513,7 +1512,6 @@ enum class AppStatus(val status: String) {
     INSTALLED("installed"),
     NOT_INSTALLED("not_installed"),
     UPDATE_AVAILABLE("update_available"),
-    UNAVAILABLE("unavailable"), // App is not available
     DOWNLOADING("downloading"),
     INSTALLING("installing"),
     UPDATING("updating"),

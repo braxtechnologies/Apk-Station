@@ -72,12 +72,6 @@ fun AppActionButtons(
             disabledContainerColor = Color(0xFFFF9800).copy(alpha = 0.6f), // Dimmed orange
             disabledContentColor = Color.White.copy(alpha = 0.7f) // Slightly dimmed white
         )
-
-        AppStatus.UNAVAILABLE -> ButtonDefaults.buttonColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-            disabledContainerColor = MaterialTheme.colorScheme.errorContainer,
-            disabledContentColor = MaterialTheme.colorScheme.onErrorContainer
-        )
     }
 
     when (appDetails.status) {
@@ -135,24 +129,6 @@ fun AppActionButtons(
             leadingButtonColors = leadingButtonColors,
             hasCircularProgressIndicator = true
         )
-
-        AppStatus.UNAVAILABLE -> HybridAppActionButtons(
-            leadingButtonText = R.string.button_unavailable,
-            leadingButtonColors = leadingButtonColors,
-            contentDescription = "Info about unavailable status",
-            dialogData = Pair(
-                context.getString(R.string.app_unavailable),
-                context.getString(R.string.dialog_app_unavailable_message)
-            ),
-            iconButtonColors = iconButtonColors(
-                containerColor = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer
-            ),
-            isRow = true,
-            isSecondButtonIcon = true,
-            infoDialogState = infoDialogState
-        )
-
     }
 }
 

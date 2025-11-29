@@ -340,6 +340,7 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
+    @Suppress("NestedBlockDepth") // Complex debug function with nested version checking
     private suspend fun handleSuccessfulResult(
         result: Result.Success<Map<String, ApkVersionDto>>,
         signalPackageName: String,

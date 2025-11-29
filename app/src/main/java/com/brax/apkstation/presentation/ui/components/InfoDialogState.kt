@@ -142,4 +142,3 @@ fun InfoDialog(state: InfoDialogState) {
         )
     }
 }
-

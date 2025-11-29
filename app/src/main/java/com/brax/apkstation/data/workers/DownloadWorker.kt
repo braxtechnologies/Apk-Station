@@ -47,6 +47,7 @@ class DownloadWorker @AssistedInject constructor(
 
     private val notificationManager = context.getSystemService<NotificationManager>()!!
 
+    @Suppress("ThrowsCount") // Complex download workflow with multiple failure points
     override suspend fun doWork(): Result {
         val packageName = inputData.getString(KEY_PACKAGE_NAME) ?: return Result.failure()
 
@@ -240,6 +241,7 @@ class DownloadWorker @AssistedInject constructor(
         }
     }
 
+    @Suppress("NestedBlockDepth", "ThrowsCount") // Complex download logic with resume, verification, and error handling
     private suspend fun downloadFile(
         url: String?,
         displayName: String,

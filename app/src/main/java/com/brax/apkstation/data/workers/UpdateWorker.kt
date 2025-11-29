@@ -208,7 +208,8 @@ class UpdateWorker @AssistedInject constructor(
                 val versionCode = packageInfo.longVersionCode.toInt()
                 installedApps[packageName] = versionCode
             } catch (e: PackageManager.NameNotFoundException) {
-                // App not installed, skip it
+                // App not installed, skip it (this is expected behavior)
+                android.util.Log.d(TAG, "Package not found: $packageName", e)
             } catch (e: Exception) {
                 android.util.Log.e(TAG, "Error getting version for $packageName", e)
             }

@@ -184,7 +184,6 @@ class CategoryAppsViewModel @Inject constructor(
                             val status = when {
                                 appFromDb?.status == AppStatus.DOWNLOADING -> AppStatus.DOWNLOADING
                                 appFromDb?.status == AppStatus.INSTALLING -> AppStatus.INSTALLING
-                                appFromDb?.status == AppStatus.UNAVAILABLE -> AppStatus.UNAVAILABLE
                                 isInstalled -> {
                                     try {
                                         val installedVersion = context.packageManager

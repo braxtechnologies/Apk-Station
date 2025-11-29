@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+@Suppress("TooManyFunctions") // ViewModel naturally has many UI-related functions
 @HiltViewModel
 class AppInfoViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
@@ -836,7 +837,6 @@ class AppInfoViewModel @Inject constructor(
         // Check database for special statuses (UNAVAILABLE)
         val dbApp = apkRepository.getAppByPackageName(packageName)
         when (dbApp?.status) {
-            AppStatus.UNAVAILABLE -> return AppStatus.UNAVAILABLE
             else -> {
                 // No special status - check installation status
                 if (isInstalled) {

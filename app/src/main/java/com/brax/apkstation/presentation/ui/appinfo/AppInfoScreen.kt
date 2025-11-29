@@ -211,7 +211,6 @@ fun AppInfoScreen(
             uiState.isSearchExpanded -> {
                 SearchResultsList(
                     searchResults = uiState.searchResults,
-                    isConnected = uiState.isConnected,
                     onAppClick = { viewModel.loadAppDetails(it) },
                     paddingValues = paddingValues
                 )
@@ -320,7 +319,6 @@ private fun SuccessScreen(
 @Composable
 private fun SearchResultsList(
     searchResults: List<AppDetailsData>,
-    isConnected: Boolean,
     onAppClick: (String) -> Unit,
     paddingValues: PaddingValues
 ) {
@@ -347,7 +345,6 @@ private fun SearchResultsList(
             items(searchResults, key = { it.packageName }) { app ->
                 SearchResultItem(
                     app = app,
-                    isConnected = isConnected,
                     onClick = { onAppClick(app.packageName) }
                 )
             }
@@ -358,7 +355,6 @@ private fun SearchResultsList(
 @Composable
 private fun SearchResultItem(
     app: AppDetailsData,
-    isConnected: Boolean,
     onClick: () -> Unit
 ) {
     Card(
