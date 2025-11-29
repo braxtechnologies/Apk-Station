@@ -86,9 +86,7 @@ fun AppInfoScreen(
     
     val uiState by viewModel.uiState.collectAsState()
     val favoritesEnabled by viewModel.favoritesEnabled.collectAsState()
-    
-    var isDescriptionExpanded by remember { mutableStateOf(false) }
-    
+
     // Load app details
     LaunchedEffect(uuid) {
         viewModel.loadAppDetails(uuid)
@@ -232,7 +230,6 @@ fun AppInfoScreen(
                     uiState.appDetails,
                     paddingValues,
                     uiState,
-                    isDescriptionExpanded,
                     viewModel,
                     context,
                     onImageClick
@@ -262,17 +259,12 @@ private fun SuccessScreen(
     appDetails: AppDetailsData?,
     paddingValues: PaddingValues,
     uiState: AppInfoUiState,
-    isDescriptionExpanded: Boolean,
     viewModel: AppInfoViewModel,
     context: Context,
     onImageClick: (List<String>, Int) -> Unit
 ) {
-    var isDescriptionExpanded1 = isDescriptionExpanded
     val isUnsupportedApp = appDetails!!.uuid == null
-    Log.d(
-        "AppInfoScreen",
-        "Showing app details - UUID: ${appDetails!!.uuid}, isUnsupportedApp: $isUnsupportedApp"
-    )
+    var isDescriptionExpanded by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -285,14 +277,14 @@ private fun SuccessScreen(
         )
 
         AppDetailsContent(
-            appDetails = appDetails!!,
+            appDetails = appDetails,
             isConnected = uiState.isConnected,
-            isDescriptionExpanded = isDescriptionExpanded1,
-            onToggleDescription = { isDescriptionExpanded1 = !isDescriptionExpanded1 },
+            isDescriptionExpanded = isDescriptionExpanded,
+            onToggleDescription = { isDescriptionExpanded = !isDescriptionExpanded },
             onInstallClick = { viewModel.installApp() },
             onOpenClick = {
                 val intent =
-                    context.packageManager.getLaunchIntentForPackage(appDetails!!.packageName)
+                    context.packageManager.getLaunchIntentForPackage(appDetails.packageName)
                 intent?.let { context.startActivity(it) }
             },
             onUninstallClick = {
