@@ -176,8 +176,6 @@ fun StoreLendingScreen(
                     onRetry = { viewModel.retryConnection() }
                 )
 
-                // This will be a very long line used to test if detekt is going to fail the CI/CD build as this line will brake a detekt rule and this is how it is supposed to happen. Let's see.
-
                 // Content area with pull to refresh
                 PullToRefreshBox(
                     isRefreshing = uiState.isRefreshing,
