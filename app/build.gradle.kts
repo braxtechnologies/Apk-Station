@@ -84,11 +84,18 @@ android {
         compose = true
         buildConfig = true
     }
+}
 
-    detekt {
-        buildUponDefaultConfig = true
+// Detekt configuration (must be at root level, not inside android {})
+detekt {
+    buildUponDefaultConfig = true
+    config.setFrom("detektRules.yml")
+}
 
-        config.setFrom("detektRules.yml")
+// Make release builds depend on detekt
+afterEvaluate {
+    tasks.matching { it.name.contains("assembleRelease") || it.name.contains("bundleRelease") }.configureEach {
+        dependsOn("detekt")
     }
 }
 
