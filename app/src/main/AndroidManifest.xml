@@ -89,11 +89,7 @@
         <!-- Install status receiver -->
         <receiver
             android:name=".data.receiver.InstallStatusReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="com.brax.apkstation.INSTALL_STATUS" />
-            </intent-filter>
-        </receiver>
+            android:exported="false" />
 
         <!-- FileProvider for sharing APK files -->
         <provider

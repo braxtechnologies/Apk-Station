@@ -4,12 +4,9 @@ import android.content.Context
 import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import androidx.hilt.work.HiltWorker
-import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.brax.apkstation.data.repository.ApkRepository
@@ -19,7 +16,6 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.concurrent.TimeUnit
 
 /**
  * UpdateWorker - Periodic worker that checks for app updates every 24 hours
@@ -43,37 +39,7 @@ class UpdateWorker @AssistedInject constructor(
         private const val TAG = "UpdateWorker"
         private const val WORK_NAME = "periodic_update_check"
         private const val ONE_TIME_WORK_NAME = "one_time_update_check"
-        
-        /**
-         * Schedule periodic update checks (every 24 hours)
-         */
-        fun schedulePeriodicUpdateCheck(context: Context) {
-            val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
-                .setRequiresBatteryNotLow(true)
-                .build()
-            
-            val workRequest = PeriodicWorkRequestBuilder<UpdateWorker>(
-                repeatInterval = 24,
-                repeatIntervalTimeUnit = TimeUnit.HOURS,
-                flexTimeInterval = 1, // Allow execution within 1 hour window
-                flexTimeIntervalUnit = TimeUnit.HOURS
-            )
-                .setConstraints(constraints)
-                .setBackoffCriteria(
-                    BackoffPolicy.EXPONENTIAL,
-                    15,
-                    TimeUnit.MINUTES
-                )
-                .build()
-            
-            WorkManager.getInstance(context)
-                .enqueueUniquePeriodicWork(
-                    WORK_NAME,
-                    ExistingPeriodicWorkPolicy.KEEP,
-                    workRequest
-                )
-        }
+
         
         /**
          * Run update check immediately (for testing purposes)
@@ -93,13 +59,6 @@ class UpdateWorker @AssistedInject constructor(
                     androidx.work.ExistingWorkPolicy.REPLACE,
                     workRequest
                 )
-        }
-        
-        /**
-         * Cancel scheduled update checks
-         */
-        fun cancelUpdateCheck(context: Context) {
-            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         }
     }
     

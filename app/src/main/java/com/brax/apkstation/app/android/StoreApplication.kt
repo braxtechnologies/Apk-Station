@@ -16,6 +16,7 @@ import com.brax.apkstation.data.helper.DownloadHelper
 import com.brax.apkstation.data.helper.NetworkMonitor
 import com.brax.apkstation.data.helper.UpdateHelper
 import com.brax.apkstation.data.receiver.PackageManagerReceiver
+import com.brax.apkstation.data.workers.CacheWorker
 import com.brax.apkstation.utils.CommonUtils
 import com.brax.apkstation.utils.CommonUtils.TAG
 import com.brax.apkstation.utils.NotificationHelper
@@ -93,7 +94,7 @@ class StoreApplication : Application(), Configuration.Provider {
         updateHelper.scheduleAutomatedCheck()
         
         // Schedule periodic cache cleanup (every 6 hours, keeps files for 24 hours)
-        com.brax.apkstation.data.workers.CacheWorker.scheduleAutomatedCacheCleanup(this)
+        CacheWorker.scheduleAutomatedCacheCleanup(this)
         
         // Initialize app status helper to sync DB with installations/uninstallations
         appStatusHelper.init()
