@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.brax.apkstation.data.network.dto.ApkVersionDto
 import com.brax.apkstation.data.repository.ApkRepository
+import com.brax.apkstation.data.workers.UpdateWorker
 import com.brax.apkstation.di.NetworkModule
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Constants
@@ -404,7 +405,7 @@ class SettingsViewModel @Inject constructor(
     fun runUpdateWorker() {
         viewModelScope.launch {
             try {
-                com.brax.apkstation.data.workers.UpdateWorker.runUpdateCheckNow(context)
+                UpdateWorker.runUpdateCheckNow(context)
                 _debugMessage.emit("✅ Update worker started! Check Logcat for 'UpdateWorker'")
             } catch (e: Exception) {
                 _debugMessage.emit("❌ Error: ${e.message}")
