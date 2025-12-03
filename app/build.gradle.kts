@@ -151,9 +151,6 @@ dependencies {
     implementation(libs.androidx.lifecycle.service)
     implementation(libs.androidx.lifecycle.process)
 
-    // Mini DNS
-    implementation(libs.minidns.hla)
-
     // Coil
     implementation(libs.coil.kt)
     implementation(libs.coil.compose)
