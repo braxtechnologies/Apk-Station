@@ -86,7 +86,7 @@ fun StoreLendingScreen(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.retrieveAvailableAppsList(sort = uiState.selectedSection ?: SectionTab.BRAX_PICKS.queryName)
+                viewModel.loadSection()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -183,7 +183,7 @@ fun StoreLendingScreen(
                         if (!uiState.isConnected) {
                             viewModel.showNetworkError()
                         } else {
-                            viewModel.retrieveAvailableAppsList(sort = uiState.selectedSection ?: SectionTab.BRAX_PICKS.queryName, isRefresh = true)
+                            viewModel.loadSection(isRefresh = true)
                         }
                     },
                     modifier = Modifier.fillMaxSize(),

@@ -195,6 +195,33 @@ class StoreLendingViewModel @Inject constructor(
         _lendingUiState.update { it.copy(errorMessage = error ?: "Installation failed") }
     }
 
+    /**
+     * Load available apps for the selected section
+     */
+    fun loadSection(isRefresh: Boolean = false) {
+        when (_lendingUiState.value.selectedSection) {
+            SectionTab.CATEGORIES.queryName -> {
+                // Show categories list
+                loadCategories()
+            }
+
+            SectionTab.MY_APPS.queryName -> {
+                // Show all installed apps (from Apk Station and other sources)
+                _lendingUiState.update { it.copy(isCategoriesListMode = false) }
+                loadInstalledApps()
+            }
+
+            else -> {
+                // Load apps for the selected section
+                _lendingUiState.update { it.copy(isCategoriesListMode = false) }
+                retrieveAvailableAppsList(
+                    sort = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName,
+                    isRefresh = isRefresh
+                )
+            }
+        }
+    }
+
     fun onAppActionButtonClick(app: AppItem) {
         when (app.status) {
             AppStatus.INSTALLED -> {
@@ -761,8 +788,7 @@ class StoreLendingViewModel @Inject constructor(
             )
         }
         searchJob?.cancel()
-        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
-        retrieveAvailableAppsList(sort = section)
+        loadSection()
     }
 
     /**
@@ -844,9 +870,7 @@ class StoreLendingViewModel @Inject constructor(
                 isFavoritesMode = false
             )
         }
-        // Reload the normal app list
-        val section = _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
-        retrieveAvailableAppsList(sort = section)
+        loadSection()
     }
 
     fun selectSection(section: String) {
@@ -856,24 +880,7 @@ class StoreLendingViewModel @Inject constructor(
                     selectedSection = section
                 )
             }
-            when (section) {
-                SectionTab.CATEGORIES.queryName -> {
-                    // Show categories list
-                    loadCategories()
-                }
-
-                SectionTab.MY_APPS.queryName -> {
-                    // Show all installed apps (from Apk Station and other sources)
-                    _lendingUiState.update { it.copy(isCategoriesListMode = false) }
-                    loadInstalledApps()
-                }
-
-                else -> {
-                    // Load apps for the selected section
-                    _lendingUiState.update { it.copy(isCategoriesListMode = false) }
-                    retrieveAvailableAppsList(sort = section)
-                }
-            }
+            loadSection()
         }
     }
 
@@ -1310,12 +1317,7 @@ class StoreLendingViewModel @Inject constructor(
                         enterFavoritesMode()
                     }
 
-                    else -> {
-                        val section =
-                            _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
-                        Log.d("StoreLendingViewModel", "Reloading section: $section")
-                        retrieveAvailableAppsList(sort = section, isRefresh = true)
-                    }
+                    else -> loadSection(isRefresh = true)
                 }
             }
         }
@@ -1367,11 +1369,7 @@ class StoreLendingViewModel @Inject constructor(
                         enterFavoritesMode()
                     }
 
-                    else -> {
-                        val section =
-                            _lendingUiState.value.selectedSection ?: SectionTab.BRAX_PICKS.queryName
-                        retrieveAvailableAppsList(sort = section, isRefresh = true)
-                    }
+                    else -> loadSection(isRefresh = true)
                 }
             } else {
                 // Still no connection, show error
