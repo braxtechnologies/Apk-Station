@@ -12,5 +12,6 @@
     <!-- Apk Station Colors -->
     <color name="primary_dark">#21272b</color>
     <color name="background_main">#21272b</color>
+    <color name="background_launch">#373d41</color>
 
 </resources>
