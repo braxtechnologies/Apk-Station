@@ -26,6 +26,8 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.security.MessageDigest
 
 const val NOTIFICATION_ID = 100
@@ -177,12 +179,27 @@ class DownloadWorker @AssistedInject constructor(
                 // CRITICAL: Only update DB if this download still exists and hasn't been superseded
                 // If a new download started, the old entry would be deleted, so don't create a FAILED entry
                 val currentDownload = storeDao.getDownload(packageName)
-                if (currentDownload != null) {
-                    // Download still exists, so this is a legitimate failure (not superseded)
+                
+                // Check if this is a retryable error (network/timeout issues)
+                val isRetryable = e is SocketTimeoutException ||
+                        e is UnknownHostException ||
+                        e is java.net.ConnectException ||
+                        e is java.io.InterruptedIOException ||
+                        (e is IOException && e.message?.contains("timeout", ignoreCase = true) == true)
+                
+                if (isRetryable && currentDownload != null && currentDownload.status != DownloadStatus.CANCELLED) {
+                    // Network/timeout error - retry automatically
+                    // WorkManager will use exponential backoff and retry indefinitely
+                    Log.w(TAG, "Download failed due to network issue, will retry: ${e.message}")
+                    storeDao.updateDownloadStatus(packageName, DownloadStatus.QUEUED)
+                    Result.retry()
+                } else if (currentDownload != null) {
+                    // Non-retryable error or cancelled - mark as failed
                     storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+                    Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
+                } else {
+                    Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
                 }
-
-                Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
             }
         }
     }

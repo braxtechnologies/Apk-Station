@@ -2,11 +2,13 @@ package com.brax.apkstation.data.helper
 
 import android.content.Context
 import android.util.Log
+import androidx.work.BackoffPolicy
 import androidx.work.Data
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
+import java.util.concurrent.TimeUnit
 import com.brax.apkstation.app.android.StoreApplication
 import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.room.dao.StoreDao
@@ -192,6 +194,13 @@ class DownloadHelper @Inject constructor(
             .addTag(if (download.isUpdate) DOWNLOAD_UPDATE else DOWNLOAD_APP)
             .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
             .setInputData(inputData)
+            // Retry with exponential backoff on failure (timeout, network issues, etc.)
+            // WorkManager will retry indefinitely until the download succeeds
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                30, // Start with 30 seconds delay
+                TimeUnit.SECONDS
+            )
             .build()
 
         // Ensure all app downloads are unique to preserve individual records
