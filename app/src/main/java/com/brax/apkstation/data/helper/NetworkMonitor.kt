@@ -125,5 +125,3 @@ class NetworkMonitor @Inject constructor(
         return isConnected
     }
 }
-
-

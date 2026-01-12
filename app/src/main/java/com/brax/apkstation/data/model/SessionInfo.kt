@@ -9,7 +9,3 @@ data class SessionInfo(
     val versionCode: Long,
     val displayName: String = ""
 )
-
-
-
-

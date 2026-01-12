@@ -40,7 +40,3 @@ open class PackageManagerReceiver : BroadcastReceiver() {
         }
     }
 }
-
-
-
-
