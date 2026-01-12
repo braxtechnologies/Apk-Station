@@ -91,7 +91,3 @@ open class DownloadEvent(open val packageName: String) : Event() {
      */
     data class Cancelled(override val packageName: String) : DownloadEvent(packageName)
 }
-
-
-
-
