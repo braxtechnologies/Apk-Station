@@ -328,6 +328,7 @@ class DownloadWorker @AssistedInject constructor(
                     var totalBytes = resumeFromByte // Start from resume point
                     var bytes: Int
                     var checkCounter = 0 // For periodic DB checks
+                    var lastReportedProgress = -1 // Track last reported progress to avoid duplicate updates
 
                     while (input.read(buffer).also { bytes = it } != -1) {
                         if (isStopped) {
@@ -345,7 +346,7 @@ class DownloadWorker @AssistedInject constructor(
                         output.write(buffer, 0, bytes)
                         totalBytes += bytes
 
-                        // Calculate and update progress
+                        // Calculate progress percentage
                         val progress = if (totalFileSize > 0) {
                             ((totalBytes * 100) / totalFileSize).toInt()
                         } else if (totalSize > 0) {
@@ -354,8 +355,10 @@ class DownloadWorker @AssistedInject constructor(
                             0
                         }
 
-                        if (totalBytes % (512 * 1024) == 0L) { // Update every 512KB
+                        // Update when progress changes by at least 1%
+                        if (progress > lastReportedProgress) {
                             updateProgress(displayName, progress, totalBytes, totalFileSize)
+                            lastReportedProgress = progress
                         }
                     }
 
@@ -388,8 +391,13 @@ class DownloadWorker @AssistedInject constructor(
     ) {
         val packageName = inputData.getString(KEY_PACKAGE_NAME)!!
 
-        // Update database
-        storeDao.updateDownloadProgress(packageName, progress)
+        // Update database - use full entity update to trigger Room Flow observers
+        val download = storeDao.getDownload(packageName)
+        if (download != null) {
+            storeDao.updateDownload(download.copy(progress = progress))
+        } else {
+            Log.w(TAG, "⚠️ Cannot update progress - download not found for $packageName")
+        }
 
         // Update WorkManager progress
         setProgress(

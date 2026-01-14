@@ -1,12 +1,18 @@
 package com.brax.apkstation.presentation.ui.lending.components
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -22,14 +28,26 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.SoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.brax.apkstation.R
 import com.brax.apkstation.presentation.ui.lending.LendingViewState
 import com.brax.apkstation.presentation.ui.lending.StoreLendingViewModel
@@ -44,7 +62,8 @@ fun LendingTopAppBar(
     keyboardController: SoftwareKeyboardController?,
     focusRequester: FocusRequester,
     navigationActions: AppNavigationActions,
-    favoritesEnabled: Boolean = false
+    favoritesEnabled: Boolean = false,
+    activeDownloadsCount: Int = 0
 ) {
     TopAppBar(
         title = {
@@ -125,6 +144,49 @@ fun LendingTopAppBar(
                     imageVector = if (uiState.isSearchMode) Icons.Default.Close else Icons.Default.Search,
                     contentDescription = if (uiState.isSearchMode) "Close search" else "Search"
                 )
+            }
+            
+            // Downloads icon with badge (only show when there are active downloads)
+            AnimatedVisibility(
+                visible = !uiState.isSearchMode && activeDownloadsCount > 0,
+                enter = scaleIn(
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    )
+                ) + fadeIn(),
+                exit = scaleOut() + fadeOut()
+            ) {
+                IconButton(
+                    onClick = { navigationActions.navigateToActiveDownloads() }
+                ) {
+                    Box {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Active downloads"
+                        )
+                        // Badge with count
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .offset(x = 4.dp, y = (-4).dp)
+                                .size(16.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.error),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = if (activeDownloadsCount > 9) "9+" else activeDownloadsCount.toString(),
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                ),
+                                color = MaterialTheme.colorScheme.onError,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
             }
             
             // Heart icon - toggle favorites view (hide when search is open, only show if enabled)

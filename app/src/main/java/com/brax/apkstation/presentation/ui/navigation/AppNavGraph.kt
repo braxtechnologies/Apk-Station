@@ -22,6 +22,7 @@ import androidx.navigation.toRoute
 import com.brax.apkstation.app.android.MainViewModel
 import com.brax.apkstation.presentation.ui.appinfo.AppInfoScreen
 import com.brax.apkstation.presentation.ui.categoryapps.CategoryAppsScreen
+import com.brax.apkstation.presentation.ui.downloads.ActiveDownloadsScreen
 import com.brax.apkstation.presentation.ui.imageviewer.ImageViewerScreen
 import com.brax.apkstation.presentation.ui.lending.StoreLendingScreen
 import com.brax.apkstation.presentation.ui.permission.PermissionScreen
@@ -106,6 +107,15 @@ fun AppNavGraph(
             composable<com.brax.apkstation.presentation.ui.navigation.CategoryAppsScreen> {
                 CategoryAppsScreen(
                     navigationActions = navigationActions
+                )
+            }
+
+            composable<com.brax.apkstation.presentation.ui.navigation.ActiveDownloadsScreen> {
+                ActiveDownloadsScreen(
+                    onNavigateBack = navigationActions::navigateBack,
+                    onAppClick = { packageName ->
+                        navigationActions.navigateToAppInfo(packageName)
+                    }
                 )
             }
         }

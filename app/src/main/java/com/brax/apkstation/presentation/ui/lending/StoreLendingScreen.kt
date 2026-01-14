@@ -68,6 +68,7 @@ fun StoreLendingScreen(
     val context = LocalContext.current
     val uiState by viewModel.lendingUiState.collectAsStateWithLifecycle()
     val favoritesEnabled by viewModel.favoritesEnabled.collectAsStateWithLifecycle()
+    val activeDownloadsCount by viewModel.activeDownloadsCount.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -134,12 +135,13 @@ fun StoreLendingScreen(
     Scaffold(
         topBar = {
             LendingTopAppBar(
-                uiState,
-                viewModel,
-                keyboardController,
-                focusRequester,
-                navigationActions,
-                favoritesEnabled
+                uiState = uiState,
+                viewModel = viewModel,
+                keyboardController = keyboardController,
+                focusRequester = focusRequester,
+                navigationActions = navigationActions,
+                favoritesEnabled = favoritesEnabled,
+                activeDownloadsCount = activeDownloadsCount
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },

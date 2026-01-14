@@ -47,11 +47,10 @@ class DownloadHelper @Inject constructor(
     private val workManager = WorkManager.getInstance(context)
 
     /**
-     * Flow of all downloads
+     * Flow of all downloads - cached StateFlow so all collectors share the same instance
      */
-    val downloadsList
-        get() = downloadDao.getAllDownloads()
-            .stateIn(StoreApplication.scope, SharingStarted.WhileSubscribed(), emptyList())
+    val downloadsList = downloadDao.getAllDownloads()
+        .stateIn(StoreApplication.scope, SharingStarted.Eagerly, emptyList())
 
     /**
      * Initialize the helper - removes failed downloads and starts observing
