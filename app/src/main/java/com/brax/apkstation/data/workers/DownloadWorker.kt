@@ -49,7 +49,7 @@ class DownloadWorker @AssistedInject constructor(
 
     private val notificationManager = context.getSystemService<NotificationManager>()!!
 
-    @Suppress("ThrowsCount") // Complex download workflow with multiple failure points
+    @Suppress("ThrowsCount", "CyclomaticComplexMethod") // Complex download workflow with multiple failure points
     override suspend fun doWork(): Result {
         val packageName = inputData.getString(KEY_PACKAGE_NAME) ?: return Result.failure()
 
