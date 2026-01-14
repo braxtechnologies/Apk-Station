@@ -62,9 +62,14 @@ class DownloadWorker @AssistedInject constructor(
 
                 // If URL is not present, fetch it from API first
                 if (download.url.isNullOrBlank()) {
-                    fetchDownloadUrl(packageName, download) ?: return@withContext Result.failure(
-                        workDataOf(KEY_ERROR to "Failed to get download URL")
-                    )
+                    val url = fetchDownloadUrl(packageName, download)
+                    if (url == null) {
+                        // Failed to get URL - retry with backoff
+                        // This handles 504 Gateway Timeout and other server errors
+                        Log.w(TAG, "Failed to get download URL, will retry...")
+                        storeDao.updateDownloadStatus(packageName, DownloadStatus.QUEUED)
+                        return@withContext Result.retry()
+                    }
                 }
 
                 // Re-fetch download to get updated URL and MD5 after fetchDownloadUrl

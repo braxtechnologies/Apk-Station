@@ -425,14 +425,16 @@ class AppInfoViewModel @Inject constructor(
                     val apkDetails = getApkDetailsForDownload(app)
 
                     // Create download entry and save to database
-                    createAndSaveDownload(app, apkDetails)
+                    val download = createAndSaveDownload(app, apkDetails)
 
                     // Enqueue download via DownloadHelper - it handles everything
-                    val download = Download.fromApkDetails(apkDetails, false, app.hasUpdate)
                     downloadHelper.enqueueDownload(download)
                 } catch (e: Exception) {
                     // Handle errors during setup
                     Log.e("AppInfoViewModel", "Failed to start download for ${app.packageName}", e)
+                    
+                    // Clean up any partial download entry
+                    apkRepository.deleteDownload(app.packageName)
                     
                     _uiState.update { state ->
                         state.appDetails?.let { details ->
@@ -532,11 +534,12 @@ class AppInfoViewModel @Inject constructor(
      * Create download entity and save to database
      * If versions is empty (app not cached), we create a minimal download entry
      * and the actual version info will be updated from the download response
+     * @return The created Download entity
      */
     private suspend fun createAndSaveDownload(
         app: AppDetailsData,
         apkDetails: ApkDetailsDto
-    ) {
+    ): Download {
         val download = if (apkDetails.versions.isNotEmpty()) {
             // Normal case: versions available
             Download.fromApkDetails(apkDetails, false, app.hasUpdate)
@@ -567,6 +570,8 @@ class AppInfoViewModel @Inject constructor(
 
         apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)
         apkRepository.saveDownloadToDb(download)
+        
+        return download
     }
 
 
