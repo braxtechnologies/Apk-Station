@@ -84,10 +84,15 @@ fun StoreLendingScreen(
     }
 
     // Observe lifecycle to refresh status when returning from app info
+    // Don't reload if in search mode - preserve search results
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.loadSection()
+                // Only reload section if NOT in search mode
+                // Search results should be preserved when navigating back
+                if (!uiState.isSearchMode) {
+                    viewModel.loadSection()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
