@@ -27,6 +27,9 @@ data class CategoryAppsScreen(
     val categoryName: String
 )
 
+@Serializable
+object ActiveDownloadsScreen
+
 /**
  * Models the navigation actions in the app.
  */
@@ -47,6 +50,8 @@ class AppNavigationActions(private val navController: NavController) {
     
     fun navigateToCategoryApps(categoryKey: String, categoryName: String) = 
         navController.navigate(CategoryAppsScreen(categoryKey, categoryName))
+    
+    fun navigateToActiveDownloads() = navController.navigate(ActiveDownloadsScreen)
     
     fun navigateBack() = navController.navigateUp()
 

@@ -7,6 +7,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.toRoute
+import com.brax.apkstation.data.model.DownloadStatus
 import com.brax.apkstation.data.repository.ApkRepository
 import com.brax.apkstation.data.room.entity.Download
 import com.brax.apkstation.presentation.ui.lending.AppItem
@@ -294,12 +295,36 @@ class CategoryAppsViewModel @Inject constructor(
                     is Result.Success -> {
                         val apkDetails = result.data
 
-                        // Create download entry
-                        val download = Download.fromApkDetails(
+                        // Create download entry - handle case when versions is empty
+                        val download = if (apkDetails.versions.isNotEmpty()) {
+                            Download.fromApkDetails(
                                 apkDetails,
                                 isInstalled = false,
                                 isUpdate = app.hasUpdate
                             )
+                        } else {
+                            // App not cached yet - create minimal download entry
+                            Download(
+                                packageName = apkDetails.packageName,
+                                url = null,
+                                version = "Unknown",
+                                versionCode = 0,
+                                isInstalled = false,
+                                isUpdate = app.hasUpdate,
+                                displayName = apkDetails.name,
+                                icon = apkDetails.icon,
+                                status = DownloadStatus.QUEUED,
+                                progress = 0,
+                                fileSize = 0L,
+                                speed = 0L,
+                                timeRemaining = 0L,
+                                totalFiles = 1,
+                                fileType = "application/vnd.android.package-archive",
+                                downloadedFiles = 0,
+                                apkLocation = "",
+                                md5 = null
+                            )
+                        }
 
                         // Save to database
                         apkRepository.saveApkDetailsToDb(apkDetails, AppStatus.DOWNLOADING)

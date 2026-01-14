@@ -26,6 +26,8 @@ import okhttp3.Request
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.security.MessageDigest
 
 const val NOTIFICATION_ID = 100
@@ -60,9 +62,14 @@ class DownloadWorker @AssistedInject constructor(
 
                 // If URL is not present, fetch it from API first
                 if (download.url.isNullOrBlank()) {
-                    fetchDownloadUrl(packageName, download) ?: return@withContext Result.failure(
-                        workDataOf(KEY_ERROR to "Failed to get download URL")
-                    )
+                    val url = fetchDownloadUrl(packageName, download)
+                    if (url == null) {
+                        // Failed to get URL - retry with backoff
+                        // This handles 504 Gateway Timeout and other server errors
+                        Log.w(TAG, "Failed to get download URL, will retry...")
+                        storeDao.updateDownloadStatus(packageName, DownloadStatus.QUEUED)
+                        return@withContext Result.retry()
+                    }
                 }
 
                 // Re-fetch download to get updated URL and MD5 after fetchDownloadUrl
@@ -177,12 +184,27 @@ class DownloadWorker @AssistedInject constructor(
                 // CRITICAL: Only update DB if this download still exists and hasn't been superseded
                 // If a new download started, the old entry would be deleted, so don't create a FAILED entry
                 val currentDownload = storeDao.getDownload(packageName)
-                if (currentDownload != null) {
-                    // Download still exists, so this is a legitimate failure (not superseded)
+                
+                // Check if this is a retryable error (network/timeout issues)
+                val isRetryable = e is SocketTimeoutException ||
+                        e is UnknownHostException ||
+                        e is java.net.ConnectException ||
+                        e is java.io.InterruptedIOException ||
+                        (e is IOException && e.message?.contains("timeout", ignoreCase = true) == true)
+                
+                if (isRetryable && currentDownload != null && currentDownload.status != DownloadStatus.CANCELLED) {
+                    // Network/timeout error - retry automatically
+                    // WorkManager will use exponential backoff and retry indefinitely
+                    Log.w(TAG, "Download failed due to network issue, will retry: ${e.message}")
+                    storeDao.updateDownloadStatus(packageName, DownloadStatus.QUEUED)
+                    Result.retry()
+                } else if (currentDownload != null) {
+                    // Non-retryable error or cancelled - mark as failed
                     storeDao.updateDownloadStatus(packageName, DownloadStatus.FAILED)
+                    Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
+                } else {
+                    Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
                 }
-
-                Result.failure(workDataOf(KEY_ERROR to (e.message ?: "Download failed")))
             }
         }
     }
@@ -311,6 +333,7 @@ class DownloadWorker @AssistedInject constructor(
                     var totalBytes = resumeFromByte // Start from resume point
                     var bytes: Int
                     var checkCounter = 0 // For periodic DB checks
+                    var lastReportedProgress = -1 // Track last reported progress to avoid duplicate updates
 
                     while (input.read(buffer).also { bytes = it } != -1) {
                         if (isStopped) {
@@ -328,7 +351,7 @@ class DownloadWorker @AssistedInject constructor(
                         output.write(buffer, 0, bytes)
                         totalBytes += bytes
 
-                        // Calculate and update progress
+                        // Calculate progress percentage
                         val progress = if (totalFileSize > 0) {
                             ((totalBytes * 100) / totalFileSize).toInt()
                         } else if (totalSize > 0) {
@@ -337,8 +360,10 @@ class DownloadWorker @AssistedInject constructor(
                             0
                         }
 
-                        if (totalBytes % (512 * 1024) == 0L) { // Update every 512KB
+                        // Update when progress changes by at least 1%
+                        if (progress > lastReportedProgress) {
                             updateProgress(displayName, progress, totalBytes, totalFileSize)
+                            lastReportedProgress = progress
                         }
                     }
 
@@ -371,8 +396,13 @@ class DownloadWorker @AssistedInject constructor(
     ) {
         val packageName = inputData.getString(KEY_PACKAGE_NAME)!!
 
-        // Update database
-        storeDao.updateDownloadProgress(packageName, progress)
+        // Update database - use full entity update to trigger Room Flow observers
+        val download = storeDao.getDownload(packageName)
+        if (download != null) {
+            storeDao.updateDownload(download.copy(progress = progress))
+        } else {
+            Log.w(TAG, "⚠️ Cannot update progress - download not found for $packageName")
+        }
 
         // Update WorkManager progress
         setProgress(

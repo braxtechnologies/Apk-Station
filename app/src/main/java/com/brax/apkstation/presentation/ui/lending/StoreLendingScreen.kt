@@ -68,6 +68,7 @@ fun StoreLendingScreen(
     val context = LocalContext.current
     val uiState by viewModel.lendingUiState.collectAsStateWithLifecycle()
     val favoritesEnabled by viewModel.favoritesEnabled.collectAsStateWithLifecycle()
+    val activeDownloadsCount by viewModel.activeDownloadsCount.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
 
     val snackbarHostState = remember { SnackbarHostState() }
@@ -83,10 +84,15 @@ fun StoreLendingScreen(
     }
 
     // Observe lifecycle to refresh status when returning from app info
+    // Don't reload if in search mode - preserve search results
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.loadSection()
+                // Only reload section if NOT in search mode
+                // Search results should be preserved when navigating back
+                if (!uiState.isSearchMode) {
+                    viewModel.loadSection()
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -134,12 +140,13 @@ fun StoreLendingScreen(
     Scaffold(
         topBar = {
             LendingTopAppBar(
-                uiState,
-                viewModel,
-                keyboardController,
-                focusRequester,
-                navigationActions,
-                favoritesEnabled
+                uiState = uiState,
+                viewModel = viewModel,
+                keyboardController = keyboardController,
+                focusRequester = focusRequester,
+                navigationActions = navigationActions,
+                favoritesEnabled = favoritesEnabled,
+                activeDownloadsCount = activeDownloadsCount
             )
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },

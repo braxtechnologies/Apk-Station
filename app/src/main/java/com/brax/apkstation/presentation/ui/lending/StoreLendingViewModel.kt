@@ -27,6 +27,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -76,6 +77,27 @@ class StoreLendingViewModel @Inject constructor(
             viewModelScope,
             SharingStarted.WhileSubscribed(3000L),
             false
+        )
+
+    /**
+     * Count of active downloads (queued, downloading, verifying, installing)
+     */
+    val activeDownloadsCount = downloadHelper.downloadsList
+        .map { downloads ->
+            downloads.count { download ->
+                download.status in listOf(
+                    DownloadStatus.QUEUED,
+                    DownloadStatus.DOWNLOADING,
+                    DownloadStatus.DOWNLOADED,
+                    DownloadStatus.VERIFYING,
+                    DownloadStatus.INSTALLING
+                )
+            }
+        }
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(3000L),
+            0
         )
 
     private var searchJob: Job? = null

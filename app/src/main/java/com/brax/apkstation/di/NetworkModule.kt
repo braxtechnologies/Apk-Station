@@ -78,12 +78,11 @@ object NetworkModule {
     @Singleton
     fun provideOkHttpClient(): OkHttpClient {
         return OkHttpClient.Builder().apply {
-            // Increased timeouts to support APK download preparation (2-3 minutes)
-            // As per API docs: "if the APK is not yet cached locally, it needs to be 
-            // fetched from an external source. This can take up to 2-3 minutes"
-            connectTimeout(30, TimeUnit.SECONDS)
-            readTimeout(200, TimeUnit.SECONDS) // 3+ minutes for download endpoint
-            writeTimeout(30, TimeUnit.SECONDS)
+            // No timeout limits - downloads will retry automatically on connection issues
+            // This ensures downloads complete no matter how long they take
+            connectTimeout(0, TimeUnit.SECONDS) // 0 = no timeout
+            readTimeout(0, TimeUnit.SECONDS)    // 0 = no timeout
+            writeTimeout(0, TimeUnit.SECONDS)   // 0 = no timeout
             
             // Add interceptor to fix malformed JSON responses
             addInterceptor(MalformedJsonFixInterceptor())
