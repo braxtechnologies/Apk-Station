@@ -1,3 +1,4 @@
+import com.android.build.api.dsl.ApplicationExtension
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.FileInputStream
 import java.util.Properties
@@ -16,10 +17,10 @@ plugins {
 }
 
 // Load secrets from secrets.properties file
-val secretsPropertiesFile = rootProject.file("secrets.properties")
+val secretsPropertiesFile: File? = rootProject.file("secrets.properties")
 val secretsProperties = Properties()
 
-if (secretsPropertiesFile.exists()) {
+if (secretsPropertiesFile?.exists() == true) {
     secretsProperties.load(FileInputStream(secretsPropertiesFile))
 }
 
@@ -30,7 +31,7 @@ fun getSecret(key: String): String {
         ?: ""
 }
 
-android {
+configure<ApplicationExtension> {
     namespace = "com.brax.apkstation"
     compileSdk = 36
 
@@ -40,7 +41,7 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0.0"
-        setProperty("archivesBaseName", "ApkStation-$versionName")
+        base.archivesName = "ApkStation-$versionName.apk"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -169,5 +170,4 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-
 }
