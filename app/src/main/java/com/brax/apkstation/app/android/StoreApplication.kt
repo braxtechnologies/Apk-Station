@@ -23,6 +23,8 @@ import com.brax.apkstation.utils.NotificationHelper
 import dagger.hilt.android.HiltAndroidApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.MainScope
+import ly.count.android.sdk.Countly
+import ly.count.android.sdk.CountlyConfig
 import javax.inject.Inject
 
 /**
@@ -78,6 +80,8 @@ class StoreApplication : Application(), Configuration.Provider {
     override fun onCreate() {
         super.onCreate()
 
+        initCountly()
+
         // Initialize global event flow
         events = eventFlow
         
@@ -124,5 +128,17 @@ class StoreApplication : Application(), Configuration.Provider {
         filter.addAction(Intent.ACTION_PACKAGE_ADDED)
         filter.addAction(Intent.ACTION_PACKAGE_REMOVED)
         return filter
+    }
+
+    private fun initCountly() {
+        val config = CountlyConfig(this, BuildConfig.COUNTLY_APP_KEY, BuildConfig.COUNTLY_SERVER_URL)
+
+        if (BuildConfig.DEBUG) {
+            config.setLoggingEnabled(true)
+        } else {
+            config.crashes.enableCrashReporting()
+        }
+
+        Countly.sharedInstance().init(config)
     }
 }

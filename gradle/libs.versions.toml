@@ -24,6 +24,7 @@ retrofit = "3.0.0"
 okhttp = "5.3.2"
 roomVersion = "2.8.4"
 datastorePreferencesCore = "1.2.0"
+countly = "26.1.0"
 workRuntimeKtx = "2.11.1"
 legacySupportV4 = "1.0.0"
 fragmentKtx = "1.8.9"
@@ -79,6 +80,7 @@ androidx-lifecycle-livedata-ktx = { group = "androidx.lifecycle", name = "lifecy
 androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
 androidx-fragment-ktx = { group = "androidx.fragment", name = "fragment-ktx", version.ref = "fragmentKtx" }
 androidx-core-splashscreen = { group = "androidx.core", name = "core-splashscreen", version.ref = "splashscreen" }
+countly = { module = "ly.count.android:sdk", version.ref = "countly" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }

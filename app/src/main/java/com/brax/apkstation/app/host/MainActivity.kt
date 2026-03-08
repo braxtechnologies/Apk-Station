@@ -32,8 +32,6 @@ class MainActivity : ComponentActivity() {
         val openAppInfo =
             intent?.getBooleanExtra(NotificationHelper.EXTRA_OPEN_APP_INFO, false) ?: false
         val appUuid = intent?.getStringExtra(NotificationHelper.EXTRA_APP_UUID)
-        val openLendingScreen =
-            intent?.getBooleanExtra(NotificationHelper.EXTRA_OPEN_LENDING_SCREEN, false) ?: false
 
         setContent {
             ApkStationApp(

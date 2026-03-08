@@ -24,6 +24,9 @@ if (secretsPropertiesFile?.exists() == true) {
     secretsProperties.load(FileInputStream(secretsPropertiesFile))
 }
 
+val countlyAppKey = "COUNTLY_APP_KEY"
+val countlyURL = "COUNTLY_SERVER_URL"
+
 // Function to get secret or use environment variable (for CI/CD)
 fun getSecret(key: String): String {
     return secretsProperties.getProperty(key) 
@@ -56,6 +59,11 @@ configure<ApplicationExtension> {
     }
 
     buildTypes {
+        debug {
+            buildConfigField("String", countlyAppKey, "\"${getSecret(countlyAppKey)}\"")
+            buildConfigField("String", countlyURL, "\"${getSecret(countlyURL)}\"")
+        }
+
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -67,6 +75,9 @@ configure<ApplicationExtension> {
             } else {
                 null
             }
+
+            buildConfigField("String", countlyAppKey, getSecret(countlyAppKey))
+            buildConfigField("String", countlyURL, getSecret(countlyURL))
         }
     }
 
@@ -162,6 +173,9 @@ dependencies {
     // Epoxy Recycler View
     implementation(libs.epoxy)
     ksp(libs.epoxy.processor)
+
+    // Countly
+    implementation(libs.countly)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
