@@ -76,8 +76,8 @@ configure<ApplicationExtension> {
                 null
             }
 
-            buildConfigField("String", countlyAppKey, getSecret(countlyAppKey))
-            buildConfigField("String", countlyURL, getSecret(countlyURL))
+            buildConfigField("String", countlyAppKey, "\"${getSecret(countlyAppKey)}\"")
+            buildConfigField("String", countlyURL, "\"${getSecret(countlyURL)}\"")
         }
     }
 
