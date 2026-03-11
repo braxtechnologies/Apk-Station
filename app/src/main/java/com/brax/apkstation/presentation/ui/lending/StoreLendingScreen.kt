@@ -16,11 +16,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,7 +50,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.R
+import com.brax.apkstation.presentation.ui.feedback.FeedbackBottomSheet
+import com.brax.apkstation.presentation.ui.feedback.FeedbackEvent
+import com.brax.apkstation.presentation.ui.feedback.FeedbackViewModel
 import com.brax.apkstation.presentation.ui.lending.components.AppListItem
 import com.brax.apkstation.presentation.ui.lending.components.CategoriesListScreen
 import com.brax.apkstation.presentation.ui.lending.components.CategoryItem
@@ -63,13 +69,15 @@ import com.brax.apkstation.presentation.ui.navigation.AppNavigationActions
 @Composable
 fun StoreLendingScreen(
     navigationActions: AppNavigationActions,
-    viewModel: StoreLendingViewModel = hiltViewModel()
+    viewModel: StoreLendingViewModel = hiltViewModel(),
+    feedbackViewModel: FeedbackViewModel = hiltViewModel()
 ) {
     val context = LocalContext.current
     val uiState by viewModel.lendingUiState.collectAsStateWithLifecycle()
     val favoritesEnabled by viewModel.favoritesEnabled.collectAsStateWithLifecycle()
     val activeDownloadsCount by viewModel.activeDownloadsCount.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
+    val feedbackUiState by feedbackViewModel.uiState.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     val focusRequester = remember { FocusRequester() }
@@ -117,6 +125,15 @@ fun StoreLendingScreen(
         }
     }
 
+    // Feedback events
+    LaunchedEffect(Unit) {
+        feedbackViewModel.events.collect { event ->
+            when (event) {
+                is FeedbackEvent.ShowMessage -> snackbarHostState.showSnackbar(event.message)
+            }
+        }
+    }
+
     // Back press handling
     BackHandler {
         when {
@@ -137,6 +154,14 @@ fun StoreLendingScreen(
         }
     }
 
+    FeedbackBottomSheet(
+        uiState = feedbackUiState,
+        onDismiss = feedbackViewModel::onSheetDismiss,
+        onTitleChanged = feedbackViewModel::onTitleChanged,
+        onDescriptionChanged = feedbackViewModel::onDescriptionChanged,
+        onSubmit = feedbackViewModel::submit
+    )
+
     Scaffold(
         topBar = {
             LendingTopAppBar(
@@ -148,6 +173,17 @@ fun StoreLendingScreen(
                 favoritesEnabled = favoritesEnabled,
                 activeDownloadsCount = activeDownloadsCount
             )
+        },
+        floatingActionButton = {
+            // Ignore this warning this values might be null if Plane is not used
+            if (BuildConfig.PLANE_BASE_URL != "null" || BuildConfig.PLANE_API_KEY != "null") {
+                FloatingActionButton(onClick = feedbackViewModel::onSheetOpen) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Chat,
+                        contentDescription = "Share feedback"
+                    )
+                }
+            }
         },
         snackbarHost = { SnackbarHost(snackbarHostState) },
         containerColor = MaterialTheme.colorScheme.background

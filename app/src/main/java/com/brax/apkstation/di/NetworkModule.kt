@@ -2,6 +2,7 @@ package com.brax.apkstation.di
 
 import com.brax.apkstation.BuildConfig
 import com.brax.apkstation.data.network.LunrApiService
+import com.brax.apkstation.data.network.PlaneApiService
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDeserializer
 import com.brax.apkstation.data.network.dto.UpdateCheckResponseDto
 import com.brax.apkstation.utils.Constants
@@ -20,6 +21,7 @@ import okhttp3.logging.HttpLoggingInterceptor
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
+import javax.inject.Named
 import javax.inject.Singleton
 
 @Module
@@ -124,5 +126,39 @@ object NetworkModule {
     @Singleton
     fun provideLunrApiService(retrofit: Retrofit): LunrApiService {
         return retrofit.create(LunrApiService::class.java)
+    }
+
+    @Provides
+    @Singleton
+    @Named("PlaneRetrofit")
+    fun providePlaneRetrofit(gson: Gson): Retrofit {
+        val client = OkHttpClient.Builder().apply {
+            connectTimeout(30, TimeUnit.SECONDS)
+            readTimeout(30, TimeUnit.SECONDS)
+            writeTimeout(30, TimeUnit.SECONDS)
+            if (BuildConfig.DEBUG) {
+                addInterceptor(HttpLoggingInterceptor().apply {
+                    level = HttpLoggingInterceptor.Level.BODY
+                })
+            }
+        }.build()
+
+        val baseUrl = if (BuildConfig.PLANE_BASE_URL != "null") {
+            BuildConfig.PLANE_BASE_URL
+        } else {
+            "https://plane.so/"
+        }
+
+        return Retrofit.Builder()
+            .baseUrl(baseUrl)
+            .client(client)
+            .addConverterFactory(GsonConverterFactory.create(gson))
+            .build()
+    }
+
+    @Provides
+    @Singleton
+    fun providePlaneApiService(@Named("PlaneRetrofit") retrofit: Retrofit): PlaneApiService {
+        return retrofit.create(PlaneApiService::class.java)
     }
 }

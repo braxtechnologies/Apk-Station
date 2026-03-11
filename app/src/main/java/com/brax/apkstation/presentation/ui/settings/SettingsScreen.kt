@@ -7,11 +7,13 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -20,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Feedback
 import androidx.compose.material.icons.filled.HeartBroken
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Notifications
@@ -29,11 +32,14 @@ import androidx.compose.material.icons.filled.Update
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -41,6 +47,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -119,6 +126,68 @@ fun SettingsScreen(
                 message = message,
                 withDismissAction = true
             )
+        }
+    }
+
+    // Feedback bottom sheet
+    val feedbackSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    if (uiState.showFeedbackSheet) {
+        ModalBottomSheet(
+            containerColor = MaterialTheme.colorScheme.surface,
+            onDismissRequest = { viewModel.onFeedbackSheetDismiss() },
+            sheetState = feedbackSheetState
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 32.dp)
+                    .imePadding(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "Share Feedback",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                OutlinedTextField(
+                    value = uiState.feedbackTitle,
+                    onValueChange = { viewModel.onFeedbackTitleChanged(it) },
+                    label = { Text("Title") },
+                    placeholder = { Text("Brief summary of your feedback") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.feedbackSubmitting
+                )
+                OutlinedTextField(
+                    value = uiState.feedbackDescription,
+                    onValueChange = { viewModel.onFeedbackDescriptionChanged(it) },
+                    label = { Text("Description") },
+                    placeholder = { Text("Tell us more") },
+                    minLines = 4,
+                    maxLines = 6,
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.feedbackSubmitting
+                )
+                Button(
+                    onClick = {
+                        viewModel.submitFeedback()
+                        viewModel.onFeedbackSheetDismiss()
+                    },
+                    enabled = uiState.feedbackTitle.isNotBlank()
+                            && uiState.feedbackDescription.isNotBlank()
+                            && !uiState.feedbackSubmitting,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (uiState.feedbackSubmitting) {
+                        CircularProgressIndicator(
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                    }
+                    Text(if (uiState.feedbackSubmitting) "Submitting…" else "Submit")
+                }
+            }
         }
     }
 
@@ -286,11 +355,23 @@ fun SettingsScreen(
 
             // About Section
             SettingsSection(title = "About") {
-                SettingsInfoItem(
-                    icon = Icons.Default.Info,
-                    title = "App version",
-                    value = BuildConfig.VERSION_NAME
-                )
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    SettingsInfoItem(
+                        icon = Icons.Default.Info,
+                        title = "App version",
+                        value = BuildConfig.VERSION_NAME
+                    )
+
+                    if (BuildConfig.PLANE_BASE_URL != "null" || BuildConfig.PLANE_API_KEY != "null") {
+                        HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
+                        SettingsActionItem(
+                            icon = Icons.Default.Feedback,
+                            title = "Share Feedback",
+                            description = "Report a bug or suggest an improvement",
+                            onClick = { viewModel.onFeedbackSheetOpen() }
+                        )
+                    }
+                }
             }
 
             // Debug Section (only in debug builds)
@@ -500,6 +581,41 @@ private fun SettingsInfoItem(
             )
             Text(
                 text = value,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsActionItem(
+    icon: ImageVector,
+    title: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = description,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
