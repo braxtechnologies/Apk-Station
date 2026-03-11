@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.brax.apkstation.data.network.dto.ApkVersionDto
 import com.brax.apkstation.data.repository.ApkRepository
+import com.brax.apkstation.data.repository.FeedbackRepository
 import com.brax.apkstation.data.workers.UpdateWorker
 import com.brax.apkstation.presentation.ui.lending.AppStatus
 import com.brax.apkstation.utils.Constants
@@ -33,6 +34,7 @@ class SettingsViewModel @Inject constructor(
     private val apkRepository: ApkRepository,
     private val downloadHelper: com.brax.apkstation.data.helper.DownloadHelper,
     private val updateHelper: com.brax.apkstation.data.helper.UpdateHelper,
+    private val feedbackRepository: FeedbackRepository,
     @param:ApplicationContext private val context: Context
 ) : ViewModel() {
 
@@ -212,6 +214,58 @@ class SettingsViewModel @Inject constructor(
             // Reschedule with new constraints if auto-update is enabled
             if (_uiState.value.autoUpdateCheckEnabled) {
                 updateHelper.scheduleAutomatedCheck()
+            }
+        }
+    }
+
+    // ========== FEEDBACK ==========
+
+    fun onFeedbackSheetOpen() {
+        _uiState.value = _uiState.value.copy(showFeedbackSheet = true)
+    }
+
+    fun onFeedbackSheetDismiss() {
+        _uiState.value = _uiState.value.copy(
+            showFeedbackSheet = false,
+            feedbackTitle = "",
+            feedbackDescription = "",
+            feedbackSubmitting = false
+        )
+    }
+
+    fun onFeedbackTitleChanged(value: String) {
+        _uiState.value = _uiState.value.copy(feedbackTitle = value)
+    }
+
+    fun onFeedbackDescriptionChanged(value: String) {
+        _uiState.value = _uiState.value.copy(feedbackDescription = value)
+    }
+
+    fun submitFeedback() {
+        val title = _uiState.value.feedbackTitle.trim()
+        if (title.isBlank()) return
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(feedbackSubmitting = true)
+            when (val result = feedbackRepository.submitFeedback(
+                title = title,
+                description = _uiState.value.feedbackDescription.trim()
+            )) {
+                is Result.Success -> {
+                    _uiState.value = _uiState.value.copy(
+                        showFeedbackSheet = false,
+                        feedbackTitle = "",
+                        feedbackDescription = "",
+                        feedbackSubmitting = false
+                    )
+                    _debugMessage.emit("Thank you for your feedback!")
+                }
+                is Result.Error -> {
+                    _uiState.value = _uiState.value.copy(feedbackSubmitting = false)
+                    _debugMessage.emit("Failed to submit feedback: ${result.message}")
+                }
+                else -> {
+                    _uiState.value = _uiState.value.copy(feedbackSubmitting = false)
+                }
             }
         }
     }
@@ -443,5 +497,10 @@ data class SettingsUiState(
     val autoUpdateCheckEnabled: Boolean = true,
     val updateOnlyWifi: Boolean = true,
     val updateBatteryNotLow: Boolean = true,
-    val updateCheckIntervalHours: Long = 24L
+    val updateCheckIntervalHours: Long = 24L,
+    // Feedback sheet
+    val showFeedbackSheet: Boolean = false,
+    val feedbackTitle: String = "",
+    val feedbackDescription: String = "",
+    val feedbackSubmitting: Boolean = false
 )

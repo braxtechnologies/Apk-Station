@@ -26,12 +26,15 @@ if (secretsPropertiesFile?.exists() == true) {
 
 val countlyAppKey = "COUNTLY_APP_KEY"
 val countlyURL = "COUNTLY_SERVER_URL"
+val planeAPIKey = "PLANE_API_KEY"
+val planeBaseURL = "PLANE_BASE_URL"
+val planeProjectID = "PLANE_PROJECT_ID"
+val planeWorkspaceSlug = "PLANE_WORKSPACE_SLUG"
 
 // Function to get secret or use environment variable (for CI/CD)
-fun getSecret(key: String): String {
+fun getSecret(key: String): String? {
     return secretsProperties.getProperty(key) 
-        ?: System.getenv(key) 
-        ?: ""
+        ?: System.getenv(key)
 }
 
 configure<ApplicationExtension> {
@@ -51,10 +54,10 @@ configure<ApplicationExtension> {
 
     signingConfigs {
         create("release") {
-            storeFile = file(System.getenv("SIGNING_KEY_STORE_PATH") ?: "release.keystore")
-            storePassword = System.getenv("SIGNING_STORE_PASSWORD")
-            keyAlias = System.getenv("SIGNING_KEY_ALIAS")
-            keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            storeFile = file(getSecret("SIGNING_KEY_STORE_PATH") ?: "release.keystore")
+            storePassword = getSecret("SIGNING_STORE_PASSWORD")
+            keyAlias = getSecret("SIGNING_KEY_ALIAS")
+            keyPassword = getSecret("SIGNING_KEY_PASSWORD")
         }
     }
 
@@ -62,6 +65,10 @@ configure<ApplicationExtension> {
         debug {
             buildConfigField("String", countlyAppKey, "\"${getSecret(countlyAppKey)}\"")
             buildConfigField("String", countlyURL, "\"${getSecret(countlyURL)}\"")
+            buildConfigField("String", planeAPIKey, "\"${getSecret(planeAPIKey)}\"")
+            buildConfigField("String", planeBaseURL, "\"${getSecret(planeBaseURL)}\"")
+            buildConfigField("String", planeProjectID, "\"${getSecret(planeProjectID)}\"")
+            buildConfigField("String", planeWorkspaceSlug, "\"${getSecret(planeWorkspaceSlug)}\"")
         }
 
         release {
@@ -78,6 +85,10 @@ configure<ApplicationExtension> {
 
             buildConfigField("String", countlyAppKey, "\"${getSecret(countlyAppKey)}\"")
             buildConfigField("String", countlyURL, "\"${getSecret(countlyURL)}\"")
+            buildConfigField("String", planeAPIKey, "\"${getSecret(planeAPIKey)}\"")
+            buildConfigField("String", planeBaseURL, "\"${getSecret(planeBaseURL)}\"")
+            buildConfigField("String", planeProjectID, "\"${getSecret(planeProjectID)}\"")
+            buildConfigField("String", planeWorkspaceSlug, "\"${getSecret(planeWorkspaceSlug)}\"")
         }
     }
 
